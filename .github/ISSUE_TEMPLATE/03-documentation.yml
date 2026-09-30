@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         贴出文档链接和具体小节，让其他人能沿着相同步骤核对。命令输出、配置和截图需要脱敏。
-        参考 [贡献指南](https://github.com/ranxi2001/sub2api/blob/production/CONTRIBUTING.md)。
+参考 [贡献指南](https://github.com/AI8888-SHOP/sub2api/blob/production/CONTRIBUTING.md)。
   - type: checkboxes
     id: preflight
     attributes:

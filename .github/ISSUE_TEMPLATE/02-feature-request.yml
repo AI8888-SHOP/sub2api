@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         先描述要解决的问题，再讨论实现方案。大改动建议先在这里确认范围。
-        参考 [贡献指南](https://github.com/ranxi2001/sub2api/blob/production/CONTRIBUTING.md)，不要提交凭据、真实用户数据或生产配置。
+参考 [贡献指南](https://github.com/AI8888-SHOP/sub2api/blob/production/CONTRIBUTING.md)，不要提交凭据、真实用户数据或生产配置。
   - type: checkboxes
     id: preflight
     attributes:

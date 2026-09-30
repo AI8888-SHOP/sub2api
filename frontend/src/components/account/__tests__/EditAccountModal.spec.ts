@@ -447,8 +447,26 @@ describe('EditAccountModal', () => {
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     await flushPromises()
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_excel_bps).toBe(true)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_excel_bps_protocol).toBe('excel')
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_excel_bps_cache_creation_as_input).toBeUndefined()
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.unrelated).toBe('preserve')
+  })
+
+  it('saves and restores the Google Sheets BPS protocol selection', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.extra = { openai_excel_bps: true, openai_excel_bps_protocol: 'excel' }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="excel-bps-protocol-google_sheets"]').setValue(true)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    const savedExtra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(savedExtra.openai_excel_bps_protocol).toBe('google_sheets')
+    await wrapper.setProps({ account: { ...account, extra: savedExtra } })
+    expect(wrapper.get<HTMLInputElement>('[data-testid="excel-bps-protocol-google_sheets"]').element.checked).toBe(true)
+    wrapper.unmount()
   })
 
   it('saves, restores and clears Excel BPS hosted tool omission', async () => {

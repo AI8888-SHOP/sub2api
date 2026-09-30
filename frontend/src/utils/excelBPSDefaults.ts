@@ -30,6 +30,12 @@ export function defaultExcelBPSDefaults(): ExcelBPSDefaults {
 
 export type ExcelBPSMode = 'defaults' | 'initial'
 
+export type ExcelBPSProtocol = 'excel' | 'google_sheets'
+
+export function normalizeExcelBPSProtocol(value: unknown): ExcelBPSProtocol {
+  return value === 'google_sheets' ? 'google_sheets' : 'excel'
+}
+
 // The original BPS form: three model candidates with all optional checkboxes off.
 export function initialExcelBPSDefaults(): ExcelBPSDefaults {
   return { ...defaultExcelBPSDefaults(), ignore_encrypted_content: false, auto_disable_on_403: false, cache_creation_as_input: false }

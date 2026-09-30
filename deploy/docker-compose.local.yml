@@ -10,7 +10,7 @@
 #   2. mkdir -p data postgres_data redis_data
 #   3. docker-compose -f docker-compose.local.yml up -d
 #   4. Check logs: docker-compose -f docker-compose.local.yml logs -f sub2api
-#   5. Access: http://localhost:8080
+#   5. Access: http://localhost:8088
 #
 # Migration to New Server:
 #   1. docker-compose -f docker-compose.local.yml down
@@ -24,7 +24,7 @@ services:
   # Sub2API Application
   # ===========================================================================
   sub2api:
-    image: ghcr.io/ranxi2001/sub2api:latest
+    image: ghcr.io/ai8888-shop/sub2api:latest
     container_name: sub2api
     restart: unless-stopped
     security_opt:
@@ -34,7 +34,7 @@ services:
         soft: 100000
         hard: 100000
     ports:
-      - "${BIND_HOST:-0.0.0.0}:${SERVER_PORT:-8080}:8080"
+      - "${BIND_HOST:-0.0.0.0}:${SERVER_PORT:-8088}:8080"
     volumes:
       # Local directory mapping for easy migration
       - ./data:/app/data:Z

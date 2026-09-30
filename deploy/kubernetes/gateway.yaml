@@ -37,7 +37,7 @@ spec:
       # A Secret volume's root/group ownership does not satisfy the key-file contract.
       initContainers:
         - name: credential-key
-          image: ghcr.io/ranxi2001/sub2api:build-with-k8s-runtime-required
+          image: ghcr.io/ai8888-shop/sub2api:build-with-k8s-runtime-required
           command: ["/bin/sh", "-ec"]
           args:
             - |
@@ -67,7 +67,7 @@ spec:
       containers:
         - name: sub2api
           # Both images must be replaced with one verified digest containing this change.
-          image: ghcr.io/ranxi2001/sub2api:build-with-k8s-runtime-required
+          image: ghcr.io/ai8888-shop/sub2api:build-with-k8s-runtime-required
           command: ["/app/sub2api"]
           workingDir: /app
           ports:

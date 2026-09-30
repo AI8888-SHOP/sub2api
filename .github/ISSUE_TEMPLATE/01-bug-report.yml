@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        一份报告聚焦一个可独立验收的问题。先阅读 [贡献指南](https://github.com/ranxi2001/sub2api/blob/production/CONTRIBUTING.md)。
+一份报告聚焦一个可独立验收的问题。先阅读 [贡献指南](https://github.com/AI8888-SHOP/sub2api/blob/production/CONTRIBUTING.md)。
         暂时无法复现也可以报告：写明已观察到什么、缺少什么证据，不要编造步骤或根因。未知项写“未知”，不适用项写“不适用”。
         **公开内容不得包含 API Key、Authorization、Cookie、OAuth 导出、ticket/state、代理密码、订阅密钥、真实用户数据或完整业务对话。** 附件和截图也要检查；安全漏洞或凭据泄露按贡献指南中的私密报告说明处理。
   - type: checkboxes

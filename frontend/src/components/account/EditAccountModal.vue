@@ -1812,6 +1812,21 @@
         <ExcelBPSModeSwitches :enabled="excelBPSEnabled" :mode="excelBPSMode"
           :loading="bpsDefaults.loading.value" :failed="bpsDefaults.failed.value" :applied="bpsDefaults.applied.value"
           :available="!authStore.isObserver" prefix="excel-bps" @toggle="bpsDefaults.toggle" />
+        <div v-if="excelBPSEnabled" class="mt-3" data-testid="excel-bps-protocol-selector">
+          <span class="input-label">{{ t('admin.accounts.openai.excelBPSProtocol') }}</span>
+          <div class="mt-2 grid gap-2 sm:grid-cols-2" role="radiogroup" :aria-label="t('admin.accounts.openai.excelBPSProtocol')">
+            <label v-for="protocol in excelBPSProtocolOptions" :key="protocol.value"
+              class="flex cursor-pointer items-start gap-2 rounded-lg border p-3 transition-colors"
+              :class="excelBPSProtocol === protocol.value ? 'border-primary-500 bg-primary-50 dark:border-primary-700 dark:bg-primary-950/30' : 'border-gray-200 dark:border-dark-600'">
+              <input v-model="excelBPSProtocol" type="radio" :value="protocol.value"
+                :data-testid="`excel-bps-protocol-${protocol.value}`" class="mt-0.5 text-primary-600 focus:ring-primary-500" />
+              <span>
+                <span class="block text-sm font-medium">{{ protocol.label }}</span>
+                <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ protocol.description }}</span>
+              </span>
+            </label>
+          </div>
+        </div>
         <div v-if="excelBPSEnabled" class="mt-3 space-y-3">
           <label class="flex items-center gap-2 text-sm">
             <input v-model="excelBPSAllModels" type="checkbox" data-testid="excel-bps-all-models" />
@@ -3274,7 +3289,7 @@ import { DEFAULT_ACCOUNT_COST_MULTIPLIER, isValidAccountCostMultiplier, readAcco
 import { ref, reactive, computed, watch, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ExcelBPSModeSwitches from './ExcelBPSModeSwitches.vue'
-import type { ExcelBPSMode } from '@/utils/excelBPSDefaults'
+import { normalizeExcelBPSProtocol, type ExcelBPSMode, type ExcelBPSProtocol } from '@/utils/excelBPSDefaults'
 import { useExcelBPSDefaults } from '@/composables/useExcelBPSDefaults'
 import { DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES, MAX_BPS_RECOVERY_INTERVAL_MINUTES, isValidBPSRecoveryInterval, bpsRecoveryIntervalOrDefault } from '@/utils/excelBPSRecovery'
 import { useAppStore } from '@/stores/app'
@@ -3900,6 +3915,11 @@ const customBaseUrl = ref('')
 // OpenAI 自动透传开关（OAuth/API Key）
 const excelBPSEnabled = ref(false)
 const excelBPSMode = ref<ExcelBPSMode>('initial')
+const excelBPSProtocol = ref<ExcelBPSProtocol>('excel')
+const excelBPSProtocolOptions = computed(() => [
+  { value: 'excel' as const, label: t('admin.accounts.openai.excelBPSProtocolExcel'), description: t('admin.accounts.openai.excelBPSProtocolExcelDesc') },
+  { value: 'google_sheets' as const, label: t('admin.accounts.openai.excelBPSProtocolGoogleSheets'), description: t('admin.accounts.openai.excelBPSProtocolGoogleSheetsDesc') }
+])
 const excelBPSAllModels = ref(false)
 const excelBPSModels = ref<string[]>([...DEFAULT_EXCEL_BPS_MODELS])
 const excelBPSMihomo = ref(false)
@@ -4442,6 +4462,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   // Load OpenAI passthrough toggle (OpenAI OAuth/SetupToken/API Key)
   excelBPSEnabled.value = false
   excelBPSMode.value = 'initial'
+  excelBPSProtocol.value = 'excel'
   excelBPSAllModels.value = false
   excelBPSModels.value = [...DEFAULT_EXCEL_BPS_MODELS]
   excelBPSMihomo.value = false
@@ -4477,6 +4498,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'setup-token' || newAccount.type === 'apikey')) {
     excelBPSEnabled.value = newAccount.type === 'oauth' && extra?.openai_excel_bps === true
     excelBPSMode.value = extra?.openai_excel_bps_config_mode === 'defaults' ? 'defaults' : 'initial'
+    excelBPSProtocol.value = normalizeExcelBPSProtocol(extra?.openai_excel_bps_protocol)
     excelBPSAllModels.value = excelBPSEnabled.value && !Object.prototype.hasOwnProperty.call(extra ?? {}, 'openai_excel_bps_models')
     if (Object.prototype.hasOwnProperty.call(extra ?? {}, 'openai_excel_bps_models')) {
       excelBPSModels.value = Array.isArray(extra?.openai_excel_bps_models)
@@ -6013,6 +6035,7 @@ const handleSubmit = async () => {
       if (props.account.type === 'oauth' && !isSparkShadow.value && excelBPSEnabled.value) {
         newExtra.openai_excel_bps = true
         newExtra.openai_excel_bps_config_mode = excelBPSMode.value
+        newExtra.openai_excel_bps_protocol = excelBPSProtocol.value
         if (excelBPSAllModels.value) {
           delete newExtra.openai_excel_bps_models
         } else {
@@ -6021,6 +6044,7 @@ const handleSubmit = async () => {
       } else {
         delete newExtra.openai_excel_bps
         delete newExtra.openai_excel_bps_config_mode
+        delete newExtra.openai_excel_bps_protocol
         delete newExtra.openai_excel_bps_models
       }
       if (newExtra.openai_excel_bps === true && excelBPSMihomo.value && excelBPSProxySource.value === 'ip_pool') {
@@ -6057,7 +6081,7 @@ const handleSubmit = async () => {
       const preserveDisabledBPS = props.account.type === 'oauth' && !isSparkShadow.value &&
         !excelBPSEnabled.value && excelBPS403RecoveryPending.value
       if (preserveDisabledBPS) {
-        for (const key of ['openai_excel_bps_config_mode', 'openai_excel_bps_models', 'openai_excel_bps_mihomo', 'openai_excel_bps_proxy_source',
+        for (const key of ['openai_excel_bps_config_mode', 'openai_excel_bps_protocol', 'openai_excel_bps_models', 'openai_excel_bps_mihomo', 'openai_excel_bps_proxy_source',
           'openai_excel_bps_cache_creation_as_input', 'openai_excel_bps_omit_unsupported_tools',
           'openai_excel_bps_ignore_images', 'openai_excel_bps_ignore_encrypted_content']) {
           if (Object.prototype.hasOwnProperty.call(currentExtra, key)) newExtra[key] = currentExtra[key]

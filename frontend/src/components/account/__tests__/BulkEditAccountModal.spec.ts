@@ -150,6 +150,7 @@ describe('BulkEditAccountModal', () => {
     const defaultExtra = {
       openai_excel_bps_config_mode: 'initial',
       openai_excel_bps: true,
+      openai_excel_bps_protocol: 'excel',
       openai_excel_bps_models: ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra'],
       openai_excel_bps_mihomo: false,
       openai_excel_bps_proxy_source: 'mihomo',
@@ -194,6 +195,20 @@ describe('BulkEditAccountModal', () => {
       await wrapper.get('#bulk-edit-status-enabled').setValue(true)
       await submit(wrapper)
       expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { status: 'active' })
+    })
+
+    it('persists the Google Sheets BPS protocol selection', async () => {
+      const wrapper = mountModal(oauthProps)
+      await enableBPS(wrapper)
+      await wrapper.get('[data-testid="bulk-excel-bps-protocol-google_sheets"]').setValue(true)
+      await submit(wrapper)
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+        extra: expect.objectContaining({
+          openai_excel_bps: true,
+          openai_excel_bps_protocol: 'google_sheets'
+        })
+      })
+      wrapper.unmount()
     })
 
     it.each(['', '0', '-1', '1.5', '10081'])('rejects invalid bulk recovery interval %s', async (value) => {

@@ -52,6 +52,21 @@
           <ExcelBPSModeSwitches :enabled="excelBPSEnabled" :mode="excelBPSMode"
             :loading="bpsDefaults.loading.value" :failed="bpsDefaults.failed.value" :applied="bpsDefaults.applied.value"
             :available="!authStore.isObserver" prefix="bulk-excel-bps" @toggle="bpsDefaults.toggle" />
+          <div v-if="excelBPSEnabled" class="mt-3" data-testid="bulk-excel-bps-protocol-selector">
+            <span class="input-label">{{ t('admin.accounts.openai.excelBPSProtocol') }}</span>
+            <div class="mt-2 grid gap-2 sm:grid-cols-2" role="radiogroup" :aria-label="t('admin.accounts.openai.excelBPSProtocol')">
+              <label v-for="protocol in excelBPSProtocolOptions" :key="protocol.value"
+                class="flex cursor-pointer items-start gap-2 rounded-lg border p-3 transition-colors"
+                :class="excelBPSProtocol === protocol.value ? 'border-primary-500 bg-primary-50 dark:border-primary-700 dark:bg-primary-950/30' : 'border-gray-200 dark:border-dark-600'">
+                <input v-model="excelBPSProtocol" type="radio" :value="protocol.value"
+                  :data-testid="`bulk-excel-bps-protocol-${protocol.value}`" class="mt-0.5 text-primary-600 focus:ring-primary-500" />
+                <span>
+                  <span class="block text-sm font-medium">{{ protocol.label }}</span>
+                  <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ protocol.description }}</span>
+                </span>
+              </label>
+            </div>
+          </div>
           <div v-if="excelBPSEnabled" class="mt-3 space-y-3">
             <label class="flex items-center gap-2 text-sm">
               <input v-model="excelBPSAllModels" type="checkbox" data-testid="bulk-excel-bps-all-models" />
@@ -1575,7 +1590,7 @@ import { DEFAULT_ACCOUNT_COST_MULTIPLIER, isValidAccountCostMultiplier } from '@
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ExcelBPSModeSwitches from './ExcelBPSModeSwitches.vue'
-import type { ExcelBPSMode } from '@/utils/excelBPSDefaults'
+import { type ExcelBPSMode, type ExcelBPSProtocol } from '@/utils/excelBPSDefaults'
 import { useExcelBPSDefaults } from '@/composables/useExcelBPSDefaults'
 import { DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES, MAX_BPS_RECOVERY_INTERVAL_MINUTES, isValidBPSRecoveryInterval, bpsRecoveryIntervalOrDefault } from '@/utils/excelBPSRecovery'
 import { useAppStore } from '@/stores/app'
@@ -1809,6 +1824,11 @@ const status = ref<'active' | 'inactive'>('active')
 const groupIds = ref<number[]>([])
 const excelBPSEnabled = ref(false)
 const excelBPSMode = ref<ExcelBPSMode>('initial')
+const excelBPSProtocol = ref<ExcelBPSProtocol>('excel')
+const excelBPSProtocolOptions = computed(() => [
+  { value: 'excel' as const, label: t('admin.accounts.openai.excelBPSProtocolExcel'), description: t('admin.accounts.openai.excelBPSProtocolExcelDesc') },
+  { value: 'google_sheets' as const, label: t('admin.accounts.openai.excelBPSProtocolGoogleSheets'), description: t('admin.accounts.openai.excelBPSProtocolGoogleSheetsDesc') }
+])
 const excelBPSAllModels = ref(false)
 const excelBPSModels = ref<string[]>([...DEFAULT_EXCEL_BPS_MODELS])
 const excelBPSMihomo = ref(false)
@@ -2141,6 +2161,7 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     const extra = ensureExtra()
     extra.openai_excel_bps = excelBPSEnabled.value
     extra.openai_excel_bps_config_mode = excelBPSEnabled.value ? excelBPSMode.value : null
+    extra.openai_excel_bps_protocol = excelBPSProtocol.value
     // null explicitly removes an existing model scope; [] selects no BPS models.
     extra.openai_excel_bps_models = excelBPSEnabled.value && !excelBPSAllModels.value
       ? [...new Set(excelBPSModels.value.map(model => model.trim()).filter(Boolean))]
@@ -2597,6 +2618,7 @@ watch(
       baseUrl.value = ''
       excelBPSEnabled.value = false
       excelBPSMode.value = 'initial'
+      excelBPSProtocol.value = 'excel'
       excelBPSAllModels.value = false
       excelBPSModels.value = [...DEFAULT_EXCEL_BPS_MODELS]
       excelBPSMihomo.value = false
