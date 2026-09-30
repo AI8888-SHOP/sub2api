@@ -27,6 +27,29 @@ import (
 var excelBPSReplay basispoints.ReplayCache
 var excelBPSCatalog basispoints.CatalogCache
 
+type excelBPSProtocolContextKey struct{}
+
+func withExcelBPSProtocol(ctx context.Context, protocol string) context.Context {
+	if protocol != ExcelBPSProtocolGoogleSheets {
+		protocol = ExcelBPSProtocolExcel
+	}
+	return context.WithValue(ctx, excelBPSProtocolContextKey{}, protocol)
+}
+
+func excelBPSProtocolFromContext(ctx context.Context) string {
+	if protocol, ok := ctx.Value(excelBPSProtocolContextKey{}).(string); ok && protocol == ExcelBPSProtocolGoogleSheets {
+		return protocol
+	}
+	return ExcelBPSProtocolExcel
+}
+
+func excelBPSClientHeaders(protocol string) (product, profile string) {
+	if protocol == ExcelBPSProtocolGoogleSheets {
+		return "basispoints-google-sheets-plugin", "google_sheets"
+	}
+	return "basispoints-excel-plugin", "excel"
+}
+
 // BPS uses the account's OAuth credentials, so authentication failures must
 // update the same scheduling state as ordinary OpenAI requests. Keep arbitrary
 // BPS error text (which may echo request data) out of persisted account reasons.
@@ -156,12 +179,13 @@ func newExcelBPSRequestTo(ctx context.Context, targetURL, accept string, body []
 	if err != nil {
 		return nil, err
 	}
+	product, profile := excelBPSClientHeaders(excelBPSProtocolFromContext(ctx))
 	req.Header = http.Header{
 		"Authorization": {"Bearer " + token}, "Chatgpt-Account-Id": {accountID}, "X-Openai-Account-Id": {accountID},
 		"X-Basispoints-Auth-Mode": {"chatgpt"}, "Content-Type": {"application/json"}, "Accept": {accept},
 		"Origin": {"https://bps.openai.com"}, "User-Agent": {"Mozilla/5.0"},
-		"X-Openai-Internal-Basispoints-Client-Product":       {"basispoints-excel-plugin"},
-		"X-Openai-Internal-Basispoints-Client-Agent-Profile": {"excel"},
+		"X-Openai-Internal-Basispoints-Client-Product":       {product},
+		"X-Openai-Internal-Basispoints-Client-Agent-Profile": {profile},
 	}
 	return req, nil
 }
@@ -169,6 +193,7 @@ func newExcelBPSRequestTo(ctx context.Context, targetURL, accept string, body []
 // BPS deliberately bypasses Codex ticket/cookie injection and OAuth plugins:
 // only the selected account's bearer and ChatGPT account ID belong on this host.
 func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Context, account *Account, body []byte, start time.Time) (forwardResult *OpenAIForwardResult, forwardErr error) {
+	ctx = withExcelBPSProtocol(ctx, account.ExcelBPSProtocol())
 	var compactUsage OpenAIUsage
 	var compactID string
 	originalImagePolicyModel := gjson.GetBytes(body, "model").String()

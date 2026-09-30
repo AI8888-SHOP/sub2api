@@ -2191,8 +2191,16 @@ func (a *Account) IsOpenAIPassthroughEnabled() bool {
 	return false
 }
 
-// IsExcelBPSEnabled routes an existing ChatGPT OAuth account to the Excel gateway.
+const (
+	ExcelBPSProtocolKey          = "openai_excel_bps_protocol"
+	ExcelBPSProtocolExcel        = "excel"
+	ExcelBPSProtocolGoogleSheets = "google_sheets"
+)
+
+// IsExcelBPSEnabled routes an existing ChatGPT OAuth account to the BPS gateway.
 // Credentials and refresh remain on the original account; no sidecar is involved.
+// The historical name is retained for API compatibility with the existing
+// scheduler and account settings.
 func (a *Account) IsExcelBPSEnabled() bool {
 	if a == nil || a.Platform != PlatformOpenAI || a.Type != AccountTypeOAuth || a.IsShadow() || a.IsOpenAIAgentIdentity() || a.IsOpenAIPersonalAccessToken() {
 		return false
@@ -2202,6 +2210,22 @@ func (a *Account) IsExcelBPSEnabled() bool {
 	}
 	enabled, _ := a.Extra["openai_excel_bps"].(bool)
 	return enabled
+}
+
+// ExcelBPSProtocol selects the BPS client profile. Existing accounts default
+// to Excel so adding the Google Sheets profile is fully backward compatible.
+func (a *Account) ExcelBPSProtocol() string {
+	if a == nil || a.Extra == nil {
+		return ExcelBPSProtocolExcel
+	}
+	if protocol, ok := a.Extra[ExcelBPSProtocolKey].(string); ok && protocol == ExcelBPSProtocolGoogleSheets {
+		return ExcelBPSProtocolGoogleSheets
+	}
+	return ExcelBPSProtocolExcel
+}
+
+func (a *Account) IsGoogleSheetsBPS() bool {
+	return a.IsExcelBPSEnabled() && a.ExcelBPSProtocol() == ExcelBPSProtocolGoogleSheets
 }
 
 const ExcelBPSIgnoreImagesKey = "openai_excel_bps_ignore_images"

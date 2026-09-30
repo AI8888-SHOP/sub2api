@@ -94,6 +94,13 @@ func normalizeBulkExcelBPSExtra(extra map[string]any) (bool, error) {
 			}
 		}
 	}
+	if raw, exists := extra[ExcelBPSProtocolKey]; exists {
+		changed = true
+		protocol, ok := raw.(string)
+		if !ok || (protocol != ExcelBPSProtocolExcel && protocol != ExcelBPSProtocolGoogleSheets) {
+			return true, infraerrors.BadRequest("OPENAI_EXCEL_BPS_INVALID", ExcelBPSProtocolKey+" must be excel or google_sheets")
+		}
+	}
 	if raw, exists := extra[ExcelBPS403TargetGroupIDKey]; exists {
 		changed = true
 		if _, ok := excelBPS403GroupID(raw); raw != nil && !ok {
@@ -131,6 +138,7 @@ func normalizeBulkExcelBPSExtra(extra map[string]any) (bool, error) {
 		}
 	}
 	if enabled, exists := extra["openai_excel_bps"].(bool); exists && !enabled {
+		delete(extra, ExcelBPSProtocolKey)
 		extra["openai_excel_bps_models"] = nil
 		if _, exists := extra["openai_excel_bps_mihomo"]; exists {
 			extra["openai_excel_bps_mihomo"] = false
