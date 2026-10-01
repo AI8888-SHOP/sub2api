@@ -44,14 +44,26 @@ func TestExcelBPSAccountID(t *testing.T) {
 
 func TestNewExcelBPSRequestHeaders(t *testing.T) {
 	token := testExcelBPSAccessToken(t, "jwt-account")
-	req, err := newExcelBPSRequest(context.Background(), []byte(`{"model":"gpt-5.6-sol"}`), token, "jwt-account")
-	require.NoError(t, err)
-	require.Equal(t, http.MethodPost, req.Method)
-	require.Equal(t, basispoints.ResponsesURL, req.URL.String())
-	require.Equal(t, "Bearer "+token, req.Header.Get("authorization"))
-	require.Equal(t, "jwt-account", req.Header.Get("chatgpt-account-id"))
-	require.Equal(t, "jwt-account", req.Header.Get("x-openai-account-id"))
-	require.Equal(t, "chatgpt", req.Header.Get("x-basispoints-auth-mode"))
+	for _, tc := range []struct {
+		name, protocol, product, profile string
+	}{
+		{"excel", ExcelBPSProtocolExcel, "basispoints-excel-plugin", "excel"},
+		{"google sheets", ExcelBPSProtocolGoogleSheets, "basispoints-google-sheets-plugin", "google_sheets"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := withExcelBPSProtocol(context.Background(), tc.protocol)
+			req, err := newExcelBPSRequest(ctx, []byte(`{"model":"gpt-5.6-sol"}`), token, "jwt-account")
+			require.NoError(t, err)
+			require.Equal(t, http.MethodPost, req.Method)
+			require.Equal(t, basispoints.ResponsesURL, req.URL.String())
+			require.Equal(t, "Bearer "+token, req.Header.Get("authorization"))
+			require.Equal(t, "jwt-account", req.Header.Get("chatgpt-account-id"))
+			require.Equal(t, "jwt-account", req.Header.Get("x-openai-account-id"))
+			require.Equal(t, "chatgpt", req.Header.Get("x-basispoints-auth-mode"))
+			require.Equal(t, tc.product, req.Header.Get("X-Openai-Internal-Basispoints-Client-Product"))
+			require.Equal(t, tc.profile, req.Header.Get("X-Openai-Internal-Basispoints-Client-Agent-Profile"))
+		})
+	}
 }
 
 func excelAccount() *Account {
@@ -60,37 +72,49 @@ func excelAccount() *Account {
 }
 func TestExcelBPSForwardContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, stream := range []bool{false, true} {
-		t.Run(fmt.Sprint(stream), func(t *testing.T) {
-			wire := "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_excel\",\"status\":\"completed\",\"model\":\"gpt-5.6-sol\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"21\"}]}],\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}}\n\n"
-			upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(wire))}}
-			svc := openAIClientToolsTestService(upstream)
-			body := []byte(fmt.Sprintf(`{"model":"gpt-5.6-sol","stream":%v,"reasoning":{"effort":"max"},"input":"test","tools":[{"type":"custom","name":"apply_patch"}]}`, stream))
-			rec := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(rec)
-			c.Request = httptest.NewRequest("POST", "/v1/responses", bytes.NewReader(body))
-			c.Request.Header.Set("x-codex-turn-state", "must-not-leak")
-			account := excelAccount()
-			account.Proxy = &Proxy{Protocol: "http", Host: "127.0.0.1", Port: 7890}
-			account.Extra["openai_excel_bps_mihomo"] = false
-			result, err := svc.Forward(context.Background(), c, account, body)
-			require.Equal(t, account.Proxy.URL(), upstream.lastProxyURL)
-			require.NoError(t, err)
-			require.NotNil(t, result)
-			require.Equal(t, "bps.openai.com", upstream.lastReq.URL.Host)
-			require.Equal(t, "/basispoints/api/responses", upstream.lastReq.URL.Path)
-			require.Equal(t, "Bearer test-token", upstream.lastReq.Header.Get("Authorization"))
-			require.Empty(t, upstream.lastReq.Header.Get("x-codex-turn-state"))
-			require.Equal(t, HTTPUpstreamProfileExcelBPS, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
-			require.True(t, HTTPUpstreamRedirectsDisabled(upstream.lastReq.Context()))
-			require.False(t, gjson.GetBytes(upstream.lastBody, "tools").Exists())
-			require.Equal(t, "xhigh", gjson.GetBytes(upstream.lastBody, "reasoning_effort").String())
-			require.Equal(t, "xhigh", *result.ReasoningEffort)
-			require.NotNil(t, result.RequestedReasoningEffort)
-			require.Equal(t, "max", *result.RequestedReasoningEffort)
-			require.Equal(t, 10, result.Usage.InputTokens)
-			require.Contains(t, rec.Body.String(), "21")
-		})
+	for _, protocol := range []string{ExcelBPSProtocolExcel, ExcelBPSProtocolGoogleSheets} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/%t", protocol, stream), func(t *testing.T) {
+				wire := "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_excel\",\"status\":\"completed\",\"model\":\"gpt-5.6-sol\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"21\"}]}],\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}}\n\n"
+				upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(wire))}}
+				svc := openAIClientToolsTestService(upstream)
+				body := []byte(fmt.Sprintf(`{"model":"gpt-5.6-sol","stream":%v,"reasoning":{"effort":"max"},"input":"test","tools":[{"type":"custom","name":"apply_patch"}]}`, stream))
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest("POST", "/v1/responses", bytes.NewReader(body))
+				c.Request.Header.Set("x-codex-turn-state", "must-not-leak")
+				account := excelAccount()
+				account.Extra[ExcelBPSProtocolKey] = protocol
+				account.Proxy = &Proxy{Protocol: "http", Host: "127.0.0.1", Port: 7890}
+				account.Extra["openai_excel_bps_mihomo"] = false
+				result, err := svc.Forward(context.Background(), c, account, body)
+				require.Equal(t, account.Proxy.URL(), upstream.lastProxyURL)
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				require.Equal(t, "bps.openai.com", upstream.lastReq.URL.Host)
+				require.Equal(t, "/basispoints/api/responses", upstream.lastReq.URL.Path)
+				require.Equal(t, "Bearer test-token", upstream.lastReq.Header.Get("Authorization"))
+				require.Empty(t, upstream.lastReq.Header.Get("x-codex-turn-state"))
+				require.Equal(t, HTTPUpstreamProfileExcelBPS, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
+				product, profile := excelBPSClientHeaders(protocol)
+				require.Equal(t, product, upstream.lastReq.Header.Get("X-Openai-Internal-Basispoints-Client-Product"))
+				require.Equal(t, profile, upstream.lastReq.Header.Get("X-Openai-Internal-Basispoints-Client-Agent-Profile"))
+				require.True(t, HTTPUpstreamRedirectsDisabled(upstream.lastReq.Context()))
+				require.False(t, gjson.GetBytes(upstream.lastBody, "tools").Exists())
+				require.Equal(t, "xhigh", gjson.GetBytes(upstream.lastBody, "reasoning_effort").String())
+				require.Equal(t, "xhigh", *result.ReasoningEffort)
+				require.NotNil(t, result.RequestedReasoningEffort)
+				require.Equal(t, "max", *result.RequestedReasoningEffort)
+				require.Equal(t, 10, result.Usage.InputTokens)
+				require.Contains(t, rec.Body.String(), "21")
+				if stream {
+					require.Equal(t, "text/event-stream", rec.Header().Get("Content-Type"))
+					require.Contains(t, rec.Body.String(), "response.completed")
+				} else {
+					require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+				}
+			})
+		}
 	}
 }
 func TestExcelBPSUsagePreservesRequestedEffortBeforeGroupMapping(t *testing.T) {

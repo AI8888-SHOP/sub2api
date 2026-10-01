@@ -107,7 +107,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	}
 	account = latest
 	if account.IsExcelBPSEnabledForModel(extractOpenAICodexTicketModel(firstClientMessage)) {
-		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "Excel BPS models require HTTP/SSE", nil)
+		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "BPS models require HTTP/SSE", nil)
+	}
+	if account.IsPrismProtocol() {
+		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "Prism protocol requires HTTP/SSE", nil)
 	}
 	if s.accountHasLiveCodexTicket(account) {
 		defer s.holdCodexTicketChat(account)()

@@ -254,7 +254,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSImages(ctx context.Context, c *gin
 		return fail(http.StatusBadRequest, "basispoints_account_id_missing", "Excel BPS requires a ChatGPT account ID")
 	}
 	scope := fmt.Sprintf("transient:account:%d/key:%d/images", account.ID, getAPIKeyIDFromContext(c))
-	requestCtx := WithHTTPUpstreamRedirectsDisabled(WithHTTPUpstreamProfile(ctx, HTTPUpstreamProfileExcelBPS))
+	requestCtx := withExcelBPSProtocol(WithHTTPUpstreamRedirectsDisabled(WithHTTPUpstreamProfile(ctx, HTTPUpstreamProfileExcelBPS)), account.ExcelBPSProtocol())
 	build := func(ctx context.Context) (*http.Request, error) {
 		return newExcelBPSImagesRequest(ctx, upstreamURL, contentType, body, token, accountID)
 	}

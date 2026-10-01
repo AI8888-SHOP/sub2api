@@ -57,6 +57,7 @@
 - **Codex ticket 管理**：提供后台采集、注入、模型选择及账号状态展示；相关开关和采集代理由管理员配置。
 - **Mihomo 出口管理**：集成采集出口管理、票据刷新策略和节点状态操作，日常业务代理与采集出口分别配置。
 - **Excel / Basispoints**：维护模型级 BPS 路由、内嵌图片 HTTPS 中转、磁盘和并发保护、结构化输出校验，以及工具历史和 transport 恢复。开启 BPS 且账号未因 403 自动关闭时，请求强制走 BPS；不支持的能力会由 BPS 返回错误，不再静默回退原 Codex 通道。
+- **Prism Web Agent**：可选接入 `jin-wind/prism2api` 研究的 Prism 网页 Agent 协议。它通过 `prism.openai.com` 的 Cookie、项目/沙箱元数据和 `response_with_tools_start/status` 任务轮询承接 Responses 请求；启用后会把完成结果转换为 OpenAI JSON/SSE。Prism 上游本身不提供原生 token SSE，因此下游流式是任务完成后的兼容 SSE，WebSocket 不支持。
 - **上游修复维护**：持续跟踪上游 Codex、Responses、工具调用、密文恢复和限流修复；先确认与本 fork 的行为差异，再按提交级别移植并补充回归测试。
 - **独立发布与升级**：使用 `AI8888-SHOP/sub2api` 的 Release、安装资源和容器镜像。版本变更见 [更新说明](https://github.com/AI8888-SHOP/sub2api/releases)；Release 成功不代表生产服务已经部署，线上状态需要单独验证。
 
@@ -65,6 +66,24 @@
 ## 项目概述
 
 Sub2API 是一个 AI API 网关平台，用于分发和管理 AI 产品订阅的 API 配额。用户通过平台生成的 API Key 调用上游 AI 服务，平台负责鉴权、计费、负载均衡和请求转发。
+
+### Prism 协议账号配置
+
+Prism 是显式开关，账号 `extra` 设置 `openai_prism=true` 后才会启用。凭据中需要保存一个 `prism_template` JSON（来自 prism2api 的 HAR/template，不能提交到仓库）以及 `prism_cookie`。模板至少要包含以下字段：
+
+```json
+{
+  "metadata": {
+    "projectId": "…",
+    "userId": "…",
+    "sandbox_url": "https://…",
+    "sandbox_token": "…"
+  },
+  "headers": {"Referer": "https://prism.openai.com/"}
+}
+```
+
+也可以把四个元数据拆成 `prism_projectId`、`prism_userId`、`prism_sandbox_url`、`prism_sandbox_token` 凭据字段。请求会使用 `response_with_tools_start` 提交任务，再用 `response_with_tools_status` 轮询；Cookie、sandbox token、HAR 和模板都属于敏感凭据。当前适配器支持文本 Responses 和兼容 SSE，图片、文件、原生远程工具、背景任务及跨轮工具 continuation 仍应使用原生 Codex/BPS 通道。
 
 ## 核心功能
 
