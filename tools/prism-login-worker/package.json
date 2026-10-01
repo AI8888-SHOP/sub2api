@@ -1,0 +1,12 @@
+{
+  "name": "sub2api-prism-login-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.55.0"
+  }
+}

@@ -4,6 +4,8 @@ export default {
   "label": "邮箱、密码与 2FA 首次登录",
   "hint": "每行一条：账号----密码----2FA（兼容逗号分隔），最多 100 条。首次登录使用已配置的重登服务。导入后默认加入凭证运营，加密保存密码与 2FA，并开启巡检、自动重登；后续重登由本地 Worker 执行。可在此页面一键启用凭据加密；自动重登需配置 Worker。",
   "settings": "查看重登服务配置",
+  "includePrism": "同时使用 Playwright 获取 Prism 凭据",
+  "includePrismHint": "需要部署 Prism Playwright 服务。登录成功后会自动保存 Cookie、项目和沙盒元数据，启用 Prism 协议时无需手动填写。",
   "credentials": "登录凭据",
   "placeholder": "邮箱----密码----2FA 密钥",
   "nameHint": "账号名称可留空，默认使用邮箱；填写后作为名称前缀。点击“下一步”填写登录凭据。",

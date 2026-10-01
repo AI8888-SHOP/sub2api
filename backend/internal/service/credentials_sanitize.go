@@ -4,8 +4,8 @@ package service
 // account credentials map after conversion to OAuth tokens (Grok Web SSO / password).
 // Call from admin create/update/import/apply-oauth paths.
 //
-// Cookie is always stripped: bulk paths may pass an empty platform label, and
-// session-jar residue must never sit next to OAuth tokens on any platform.
+// Generic cookies are always stripped. Prism's explicitly named cookie is an
+// intentional browser credential and is protected by SensitiveCredentialKeys.
 // The platform argument is retained for call-site clarity / future scrubbing.
 func SanitizeStoredCredentials(platform string, creds map[string]any) map[string]any {
 	if creds == nil {

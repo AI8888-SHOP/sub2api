@@ -116,6 +116,11 @@ services:
       # Generate a secure key: openssl rand -hex 32
       - TOTP_ENCRYPTION_KEY=${TOTP_ENCRYPTION_KEY:-}
 
+      # Optional Prism 2FA browser capture. Set the same random secret on both
+      # services before enabling "Capture Prism credentials" in the UI.
+      - PRISM_LOGIN_WORKER_URL=${PRISM_LOGIN_WORKER_URL:-http://prism-worker:8090/login}
+      - PRISM_LOGIN_WORKER_TOKEN=${PRISM_LOGIN_WORKER_TOKEN:-}
+
       # =======================================================================
       # Timezone Configuration
       # This affects ALL time operations in the application:
@@ -218,6 +223,35 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
+  # Isolated Chromium service used only when a 2FA import requests Prism data.
+  # It is intentionally separate from the Alpine Go image and keeps browser
+  # cookies in a one-shot context.
+  prism-worker:
+    build:
+      context: ..
+      dockerfile: tools/prism-login-worker/Dockerfile
+    image: ${PRISM_WORKER_IMAGE:-ghcr.io/ai8888-shop/sub2api-prism-worker:latest}
+    container_name: sub2api-prism-worker
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - PORT=8090
+      - PRISM_LOGIN_WORKER_TOKEN=${PRISM_LOGIN_WORKER_TOKEN:-}
+      - OPENAI_LOGIN_URL=${OPENAI_LOGIN_URL:-https://chatgpt.com/auth/login}
+      - PRISM_URL=${PRISM_URL:-https://prism.openai.com}
+      - HEADLESS=true
+    expose:
+      - "8090"
+    networks:
+      - sub2api-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8090/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   # ===========================================================================
   # PostgreSQL Database

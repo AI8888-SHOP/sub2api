@@ -1,9 +1,15 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/mail"
+	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -30,17 +36,24 @@ func ValidateOpenAITwoFALogin(entry AccountTokenGuardReloginAccount) error {
 }
 
 func (s *AccountTokenGuardService) StartTwoFALogin(ctx context.Context, entry AccountTokenGuardReloginAccount) (*OpenAITwoFALoginJob, error) {
-	return s.startTwoFALogin(ctx, entry, true)
+	return s.startTwoFALogin(ctx, entry, true, false)
 }
 
 // Operations imports save their login method through the encrypted per-account
 // API after identity deduplication returns the account ID. Do not also enroll
 // them in the legacy guard's plaintext settings.
 func (s *AccountTokenGuardService) StartTwoFALoginForOperations(ctx context.Context, entry AccountTokenGuardReloginAccount) (*OpenAITwoFALoginJob, error) {
-	return s.startTwoFALogin(ctx, entry, false)
+	return s.startTwoFALogin(ctx, entry, false, false)
 }
 
-func (s *AccountTokenGuardService) startTwoFALogin(ctx context.Context, entry AccountTokenGuardReloginAccount, saveToLegacyGuard bool) (*OpenAITwoFALoginJob, error) {
+// StartTwoFALoginForOperationsPrism performs the normal OAuth login and then
+// asks the isolated Playwright worker to capture the Prism browser session.
+// The worker is opt-in because it needs a separate Chromium container.
+func (s *AccountTokenGuardService) StartTwoFALoginForOperationsPrism(ctx context.Context, entry AccountTokenGuardReloginAccount) (*OpenAITwoFALoginJob, error) {
+	return s.startTwoFALogin(ctx, entry, false, true)
+}
+
+func (s *AccountTokenGuardService) startTwoFALogin(ctx context.Context, entry AccountTokenGuardReloginAccount, saveToLegacyGuard, includePrism bool) (*OpenAITwoFALoginJob, error) {
 	if err := ValidateOpenAITwoFALogin(entry); err != nil {
 		return nil, err
 	}
@@ -69,6 +82,15 @@ func (s *AccountTokenGuardService) startTwoFALogin(ctx context.Context, entry Ac
 	go func() {
 		defer cancel()
 		credential, loginErr := s.relogin(loginCtx, cfg, entry)
+		if loginErr == nil && includePrism {
+			var prism map[string]any
+			prism, loginErr = fetchPrismWorkerCredential(loginCtx, entry, credential)
+			if loginErr == nil {
+				for key, value := range prism {
+					credential[key] = value
+				}
+			}
+		}
 		s.loginMu.Lock()
 		defer s.loginMu.Unlock()
 		if s.logins[job.ID] != job {
@@ -118,10 +140,14 @@ func (s *AccountTokenGuardService) saveTwoFALoginAccount(ctx context.Context, en
 // echoed password, MFA secret, or unexpected service configuration fields.
 func twoFALoginCredential(in map[string]any, email string) map[string]any {
 	out := map[string]any{"email": email}
-	for _, key := range []string{"access_token", "refresh_token", "id_token", "expires_at", "expired", "account_id", "chatgpt_account_id", "chatgpt_user_id", "user_id", "client_id", "plan_type"} {
+	for _, key := range []string{"access_token", "refresh_token", "id_token", "expires_at", "expired", "account_id", "chatgpt_account_id", "chatgpt_user_id", "user_id", "client_id", "plan_type", "prism_cookie", "prism_template", "prism_project_id", "prism_user_id", "prism_sandbox_url", "prism_sandbox_token"} {
 		switch value := in[key].(type) {
 		case string:
 			out[key] = value
+		case map[string]any:
+			if key == "prism_template" {
+				out[key] = value
+			}
 		case float64:
 			if key == "expires_at" || key == "expired" {
 				out[key] = value
@@ -129,6 +155,65 @@ func twoFALoginCredential(in map[string]any, email string) map[string]any {
 		}
 	}
 	return out
+}
+
+// fetchPrismWorkerCredential calls the internal Playwright service. It never
+// logs the request or response because both contain account secrets.
+func fetchPrismWorkerCredential(ctx context.Context, entry AccountTokenGuardReloginAccount, oauth map[string]any) (map[string]any, error) {
+	endpoint := strings.TrimRight(strings.TrimSpace(os.Getenv("PRISM_LOGIN_WORKER_URL")), "/")
+	if endpoint == "" {
+		endpoint = "http://prism-worker:8090/login"
+	}
+	token := strings.TrimSpace(os.Getenv("PRISM_LOGIN_WORKER_TOKEN"))
+	if token == "" {
+		return nil, errors.New("Prism Playwright 服务未配置 PRISM_LOGIN_WORKER_TOKEN")
+	}
+	payload := map[string]any{
+		"email": entry.Email, "password": entry.Password, "mfa_secret": entry.MFASecret,
+		"access_token": guardText(oauth["access_token"]),
+		"id_token": guardText(oauth["id_token"]),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, errors.New("Prism 采集请求构造失败")
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, errors.New("Prism 采集地址无效")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("Prism Playwright 服务不可用: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("Prism Playwright 服务返回 HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		Prism map[string]any `json:"prism"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error,omitempty"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, 4<<20))
+	if err := decoder.Decode(&result); err != nil {
+		return nil, errors.New("Prism 采集响应格式错误")
+	}
+	if result.Error != nil {
+		return nil, errors.New("Prism 采集失败")
+	}
+	if strings.TrimSpace(guardText(result.Prism["prism_cookie"])) == "" {
+		return nil, errors.New("Prism 采集未返回 Cookie")
+	}
+	if _, ok := result.Prism["prism_template"].(map[string]any); !ok {
+		return nil, errors.New("Prism 采集未返回模板")
+	}
+	return result.Prism, nil
 }
 
 func (s *AccountTokenGuardService) TwoFALogin(id string) (*OpenAITwoFALoginJob, bool) {

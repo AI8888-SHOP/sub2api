@@ -5,6 +5,11 @@
     <a href="/admin/token-guard" target="_blank" rel="noopener noreferrer" class="text-primary-600">
       {{ t('tokenGuard.twoFA.settings') }}
     </a>
+    <label class="flex items-center gap-2 text-sm">
+      <input v-model="includePrism" type="checkbox" :disabled="busy" data-testid="two-fa-prism" />
+      <span>{{ t('tokenGuard.twoFA.includePrism') }}</span>
+    </label>
+    <p v-if="includePrism" class="input-hint">{{ t('tokenGuard.twoFA.includePrismHint') }}</p>
     <template v-if="!rows.length">
       <label for="two-fa-credentials" class="input-label">{{ t('tokenGuard.twoFA.credentials') }}</label>
       <textarea id="two-fa-credentials" v-model="raw" class="input font-mono" rows="6"
@@ -52,6 +57,7 @@ type Row = {
 }
 const raw = ref('')
 const encryptionReady = ref(false)
+const includePrism = ref(false)
 const error = ref('')
 const rows = ref<Row[]>([])
 const busy = ref(false)
@@ -90,7 +96,7 @@ async function run() {
         if (!row.credential) {
           row.status = 'login'
           // Keep the job ID on polling failures; retry resumes the same login.
-          if (!row.jobId) row.jobId = (await startTwoFALogin(row.entry)).id
+          if (!row.jobId) row.jobId = (await startTwoFALogin(row.entry, includePrism.value)).id
           let job = await getTwoFALogin(row.jobId)
           while (job.status === 'running' && !stopRequested.value && !disposed) {
             await new Promise(resolve => setTimeout(resolve, 1500))

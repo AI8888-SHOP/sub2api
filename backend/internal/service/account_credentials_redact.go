@@ -5,6 +5,9 @@ package service
 var SensitiveCredentialKeys = []string{
 	// OAuth
 	"access_token", "refresh_token", "id_token", "agent_private_key",
+	// Prism browser session and captured project/sandbox template
+	"prism_cookie", "prism_template", "prism_sandbox_token",
+	"prism_project_id", "prism_user_id", "prism_sandbox_url",
 	// API Key 类
 	"api_key", "session_key", "cookie",
 	// Grok Web SSO / password (must never persist or echo after Build OAuth)
