@@ -2219,6 +2219,9 @@ func (a *Account) IsExcelBPSEnabled() bool {
 	if a == nil || a.Platform != PlatformOpenAI || a.Type != AccountTypeOAuth || a.IsShadow() || a.IsOpenAIAgentIdentity() || a.IsOpenAIPersonalAccessToken() {
 		return false
 	}
+	if a.IsPrismProtocol() {
+		return false
+	}
 	if strings.EqualFold(strings.TrimSpace(a.GetCredential("plan_type")), "free") {
 		return false
 	}

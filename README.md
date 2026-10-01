@@ -83,7 +83,7 @@ Prism 是显式开关，账号 `extra` 设置 `openai_prism=true` 后才会启�
 }
 ```
 
-也可以把四个元数据拆成 `prism_projectId`、`prism_userId`、`prism_sandbox_url`、`prism_sandbox_token` 凭据字段。请求会使用 `response_with_tools_start` 提交任务，再用 `response_with_tools_status` 轮询；Cookie、sandbox token、HAR 和模板都属于敏感凭据。当前适配器支持文本 Responses 和兼容 SSE，图片、文件、原生远程工具、背景任务及跨轮工具 continuation 仍应使用原生 Codex/BPS 通道。
+也可以把四个元数据拆成 `prism_projectId`、`prism_userId`、`prism_sandbox_url`、`prism_sandbox_token` 凭据字段。请求会使用 `response_with_tools_start` 提交任务，再用 `response_with_tools_status` 轮询；Cookie、sandbox token、HAR 和模板都属于敏感凭据。当前适配器支持文本 Responses、图片生成/编辑和兼容 SSE；图片请求会像 BPS 一样转换为 Responses `image_generation` 工具请求并由 Prism 完成后还原为 Images API 响应。WebSocket、Embeddings、文件输入、原生远程工具、背景任务及跨轮工具 continuation 仍不支持，不能回退到其他协议。
 
 ## 核心功能
 

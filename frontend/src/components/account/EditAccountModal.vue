@@ -1811,7 +1811,7 @@
         </div>
         <ExcelBPSModeSwitches :enabled="excelBPSEnabled" :mode="excelBPSMode"
           :loading="bpsDefaults.loading.value" :failed="bpsDefaults.failed.value" :applied="bpsDefaults.applied.value"
-          :available="!authStore.isObserver" prefix="excel-bps" @toggle="bpsDefaults.toggle" />
+          :available="!authStore.isObserver" prefix="excel-bps" @toggle="toggleExcelBPS" />
         <div v-if="excelBPSEnabled" class="mt-3" data-testid="excel-bps-protocol-selector">
           <span class="input-label">{{ t('admin.accounts.openai.excelBPSProtocol') }}</span>
           <div class="mt-2 grid gap-2 sm:grid-cols-2" role="radiogroup" :aria-label="t('admin.accounts.openai.excelBPSProtocol')">
@@ -1936,7 +1936,7 @@
         </div>
         <div v-if="account?.platform === 'openai' && !isSparkShadow" class="mt-4 border-t border-gray-200 pt-4 dark:border-dark-600">
           <label class="flex items-center gap-2 text-sm">
-            <input v-model="prismProtocolEnabled" type="checkbox" data-testid="openai-prism-protocol" />
+            <input v-model="prismProtocolEnabled" type="checkbox" data-testid="openai-prism-protocol" @change="onPrismProtocolChange" />
             <span>{{ t('admin.accounts.openai.prismProtocol') }}</span>
           </label>
           <p class="mt-1 text-xs text-amber-600 dark:text-amber-400">{{ t('admin.accounts.openai.prismProtocolDesc') }}</p>
@@ -3949,6 +3949,16 @@ const bpsDefaults = useExcelBPSDefaults({
   }
 })
 
+async function toggleExcelBPS(mode: ExcelBPSMode): Promise<void> {
+  const turningOff = excelBPSEnabled.value && excelBPSMode.value === mode
+  if (!turningOff) prismProtocolEnabled.value = false
+  await bpsDefaults.toggle(mode)
+}
+
+function onPrismProtocolChange(event: Event): void {
+  if ((event.target as HTMLInputElement).checked) excelBPSEnabled.value = false
+}
+
 const excelBPS403GroupOptions = computed(() => [
   { value: '', label: t('admin.accounts.openai.excelBPS403SelectTarget') },
   { value: 0, label: t('admin.accounts.openai.excelBPS403LeaveAllGroups') },
@@ -4495,7 +4505,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   webSearchEmulationMode.value = 'default'
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'setup-token' || newAccount.type === 'apikey')) {
     prismProtocolEnabled.value = extra?.openai_prism === true
-    excelBPSEnabled.value = newAccount.type === 'oauth' && extra?.openai_excel_bps === true
+    excelBPSEnabled.value = newAccount.type === 'oauth' && !prismProtocolEnabled.value && extra?.openai_excel_bps === true
     excelBPSMode.value = extra?.openai_excel_bps_config_mode === 'defaults' ? 'defaults' : 'initial'
     excelBPSProtocol.value = normalizeExcelBPSProtocol(extra?.openai_excel_bps_protocol)
     excelBPSAllModels.value = excelBPSEnabled.value && !Object.prototype.hasOwnProperty.call(extra ?? {}, 'openai_excel_bps_models')
@@ -6035,7 +6045,8 @@ const handleSubmit = async () => {
         })
       }
       const hadCodexCLIOnlyEnabled = currentExtra.codex_cli_only === true
-      if (props.account.type === 'oauth' && !isSparkShadow.value && excelBPSEnabled.value) {
+      const saveExcelBPS = !prismProtocolEnabled.value && excelBPSEnabled.value
+      if (props.account.type === 'oauth' && !isSparkShadow.value && saveExcelBPS) {
         newExtra.openai_excel_bps = true
         newExtra.openai_excel_bps_config_mode = excelBPSMode.value
         newExtra.openai_excel_bps_protocol = excelBPSProtocol.value
@@ -6077,7 +6088,7 @@ const handleSubmit = async () => {
       }
       // Preserve hidden routing options when editing a 403-disabled account.
       const preserveDisabledBPS = props.account.type === 'oauth' && !isSparkShadow.value &&
-        !excelBPSEnabled.value && excelBPS403RecoveryPending.value
+        !prismProtocolEnabled.value && !excelBPSEnabled.value && excelBPS403RecoveryPending.value
       if (preserveDisabledBPS) {
         for (const key of ['openai_excel_bps_config_mode', 'openai_excel_bps_protocol', 'openai_excel_bps_models', 'openai_excel_bps_mihomo', 'openai_excel_bps_proxy_source',
           'openai_excel_bps_cache_creation_as_input', 'openai_excel_bps_omit_unsupported_tools',
