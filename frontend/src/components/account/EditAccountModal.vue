@@ -31,6 +31,21 @@
         <p class="input-hint">{{ t('priorityScheduling.modelAliasesHint') }}</p>
       </div>
 
+      <div
+        v-if="account.platform === 'openai' && account.type === 'oauth' && !isSparkShadow"
+        class="rounded-lg border border-gray-200 p-3 dark:border-dark-600"
+        data-testid="openai-prism-browser-oauth-settings"
+      >
+        <label class="flex items-center gap-2 text-sm">
+          <input v-model="prismBrowserEnabled" type="checkbox" data-testid="openai-prism-browser-oauth-toggle" @change="onPrismBrowserChange" />
+          <span>{{ t('admin.accounts.openai.prismBrowser') }}</span>
+        </label>
+        <p class="input-hint">{{ t('admin.accounts.openai.prismBrowserDesc') }}</p>
+        <p v-if="prismBrowserEnabled" class="mt-2 text-xs text-primary-600 dark:text-primary-400">
+          {{ t('admin.accounts.openai.prismBrowserManagedEndpoint') }}
+        </p>
+      </div>
+
       <!-- API Key fields (only for apikey type) -->
       <div v-if="account.type === 'apikey'" class="space-y-4">
         <div v-if="!isCNApiKeyAccount || editApiProtocol !== 'adaptive'">
@@ -3594,6 +3609,7 @@ interface TempUnschedRuleForm {
 const submitting = ref(false)
 const editBaseUrl = ref('https://api.anthropic.com')
 const editApiKey = ref('')
+const prismBrowserEnabled = ref(false)
 
 // ── 国产供应商（Kimi / Zhipu / DeepSeek）account_mode / api_protocol 编辑 ──
 // account_mode 决定额度/余额监控路径，api_protocol 决定转发端点与格式；
@@ -3978,7 +3994,14 @@ async function toggleExcelBPS(mode: ExcelBPSMode): Promise<void> {
 }
 
 function onPrismProtocolChange(event: Event): void {
-  if ((event.target as HTMLInputElement).checked) excelBPSEnabled.value = false
+  if ((event.target as HTMLInputElement).checked) {
+    excelBPSEnabled.value = false
+    prismBrowserEnabled.value = false
+  }
+}
+
+function onPrismBrowserChange(event: Event): void {
+  if ((event.target as HTMLInputElement).checked) prismProtocolEnabled.value = false
 }
 
 const excelBPS403GroupOptions = computed(() => [
@@ -4515,6 +4538,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   prismIgnoreEncryptedContent.value = false
   prismAutoDisableOn403.value = false
   prismCacheCreationAsInput.value = false
+  prismBrowserEnabled.value = false
   copilotSDKEnabled.value = false
   openaiPassthroughEnabled.value = false
   openaiFlattenNamespacesEnabled.value = false
@@ -4549,6 +4573,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     prismAutoDisableOn403.value = newAccount.type === 'oauth' && extra?.openai_prism_auto_disable_on_403 === true
     prismCacheCreationAsInput.value = prismProtocolEnabled.value && extra?.openai_prism_cache_creation_as_input === true
     excelBPSEnabled.value = newAccount.type === 'oauth' && !prismProtocolEnabled.value && extra?.openai_excel_bps === true
+    prismBrowserEnabled.value = newAccount.type === 'oauth' && extra?.openai_prism_browser === true
     excelBPSMode.value = extra?.openai_excel_bps_config_mode === 'defaults' ? 'defaults' : 'initial'
     excelBPSProtocol.value = normalizeExcelBPSProtocol(extra?.openai_excel_bps_protocol)
     excelBPSAllModels.value = excelBPSEnabled.value && !Object.prototype.hasOwnProperty.call(extra ?? {}, 'openai_excel_bps_models')
@@ -6221,6 +6246,10 @@ const handleSubmit = async () => {
         delete newExtra.openai_compact_mode
       } else {
         newExtra.openai_compact_mode = openAICompactMode.value
+      }
+      if (props.account.type === 'oauth') {
+        if (prismBrowserEnabled.value && !prismProtocolEnabled.value) newExtra.openai_prism_browser = true
+        else delete newExtra.openai_prism_browser
       }
 		if (props.account.type === 'apikey') {
         if (!openAITextGenerationCapabilityEnabled.value || openAIResponsesMode.value === 'auto') {
