@@ -23,8 +23,10 @@ func TestPrismRequestBodyUsesCapturedMetadataAndMaxEffort(t *testing.T) {
 	require.NotEmpty(t, nonce)
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(raw, &body))
-	require.Equal(t, "project-1", body["metadata"].(map[string]any)["projectId"])
-	require.Equal(t, map[string]any{"effort": "max"}, body["metadata"].(map[string]any)["output_config"])
+	metadata, ok := body["metadata"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "project-1", metadata["projectId"])
+	require.Equal(t, map[string]any{"effort": "max"}, metadata["output_config"])
 	require.NotEmpty(t, body["conversationId"])
 }
 

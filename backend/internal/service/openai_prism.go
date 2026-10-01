@@ -81,11 +81,11 @@ func prismTemplateFromAccount(account *Account) (prismTemplate, error) {
 	}
 	for _, key := range []string{"projectId", "userId", "sandbox_url", "sandbox_token"} {
 		if value, ok := template.Metadata[key].(string); !ok || strings.TrimSpace(value) == "" {
-			return template, fmt.Errorf("Prism requires credentials.prism_template.metadata.%s", key)
+			return template, fmt.Errorf("prism requires credentials.prism_template.metadata.%s", key)
 		}
 	}
 	if strings.TrimSpace(template.Headers["Cookie"]) == "" && strings.TrimSpace(template.Headers["cookie"]) == "" {
-		return template, fmt.Errorf("Prism requires credentials.prism_cookie or prism_template.headers.Cookie")
+		return template, fmt.Errorf("prism requires credentials.prism_cookie or prism_template.headers.Cookie")
 	}
 	return template, nil
 }
@@ -106,7 +106,7 @@ func prismRequestBody(account *Account, body []byte) ([]byte, string, string, er
 	}
 	var request map[string]any
 	if err := json.Unmarshal(body, &request); err != nil {
-		return nil, "", "", fmt.Errorf("Prism request must be valid JSON")
+		return nil, "", "", fmt.Errorf("prism request must be valid JSON")
 	}
 	model := gjson.GetBytes(body, "model").String()
 	if strings.TrimSpace(model) == "" {
@@ -180,18 +180,18 @@ func prismProxyURL(account *Account) string {
 func prismEnvelopePayload(raw []byte) (map[string]any, error) {
 	var envelope map[string]any
 	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return nil, fmt.Errorf("Prism returned invalid JSON")
+		return nil, fmt.Errorf("prism returned invalid JSON")
 	}
 	if envelope["status"] != "completed" {
-		return nil, fmt.Errorf("Prism task did not complete")
+		return nil, fmt.Errorf("prism task did not complete")
 	}
 	wrapper, ok := envelope["response"].(map[string]any)
 	if !ok || wrapper["status"] != "success" {
-		return nil, fmt.Errorf("Prism task failed")
+		return nil, fmt.Errorf("prism task failed")
 	}
 	payload, ok := wrapper["payload"].(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("Prism completed without a response payload")
+		return nil, fmt.Errorf("prism completed without a response payload")
 	}
 	return payload, nil
 }
@@ -209,7 +209,7 @@ func prismOutputText(payload map[string]any) string {
 			part, _ := partRaw.(map[string]any)
 			if part["type"] == "output_text" {
 				if text, ok := part["text"].(string); ok {
-					builder.WriteString(text)
+					_, _ = builder.WriteString(text)
 				}
 			}
 		}
@@ -274,13 +274,13 @@ func (s *OpenAIGatewayService) prismCall(ctx context.Context, account *Account, 
 	if err != nil {
 		return nil, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if readErr != nil {
 		return nil, resp.StatusCode, readErr
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, resp.StatusCode, fmt.Errorf("Prism upstream returned HTTP %d", resp.StatusCode)
+		return nil, resp.StatusCode, fmt.Errorf("prism upstream returned HTTP %d", resp.StatusCode)
 	}
 	return raw, resp.StatusCode, nil
 }
@@ -310,7 +310,7 @@ func (s *OpenAIGatewayService) forwardPrism(ctx context.Context, c *gin.Context,
 			stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			_, _, _ = s.prismCall(stopCtx, account, prismStopPath, prismStopBody)
 			cancel()
-			err := fmt.Errorf("Prism task timed out")
+			err := fmt.Errorf("prism task timed out")
 			c.JSON(http.StatusGatewayTimeout, gin.H{"error": gin.H{"type": "server_error", "code": "prism_timeout", "message": err.Error()}})
 			return nil, err
 		}
@@ -336,7 +336,7 @@ func (s *OpenAIGatewayService) forwardPrism(ctx context.Context, c *gin.Context,
 			return nil, err
 		}
 	}
-	payload, err := prismEnvelopePayload(mustJSON(current))
+	payload, err := prismEnvelopePayload(prismMustJSON(current))
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "server_error", "code": "prism_task_error", "message": err.Error()}})
 		return nil, err
@@ -369,7 +369,7 @@ func (s *OpenAIGatewayService) forwardPrism(ctx context.Context, c *gin.Context,
 	return result, nil
 }
 
-func mustJSON(value map[string]any) []byte {
+func prismMustJSON(value map[string]any) []byte {
 	raw, _ := json.Marshal(value)
 	return raw
 }
