@@ -10,6 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
@@ -46,10 +49,31 @@ func prismStringMap(value any) map[string]string {
 	return result
 }
 
+func prismCredentialString(account *Account, keys ...string) string {
+	if account == nil {
+		return ""
+	}
+	for _, key := range keys {
+		if value := strings.TrimSpace(account.GetCredential(key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func prismMapString(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := values[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 func prismTemplateFromAccount(account *Account) (prismTemplate, error) {
 	template := prismTemplate{Metadata: map[string]any{}, Headers: map[string]string{}}
 	if account != nil && account.Credentials != nil {
-		raw := account.Credentials["prism_template"]
+		raw := account.Credentials[PrismTemplateKey]
 		switch value := raw.(type) {
 		case map[string]any:
 			if metadata, ok := value["metadata"].(map[string]any); ok {
@@ -70,22 +94,67 @@ func prismTemplateFromAccount(account *Account) (prismTemplate, error) {
 			}
 			template.Headers = prismStringMap(decoded["headers"])
 		}
-		for _, key := range []string{"projectId", "userId", "sandbox_url", "sandbox_token"} {
-			if value, ok := account.Credentials["prism_"+key].(string); ok && strings.TrimSpace(value) != "" {
-				template.Metadata[key] = value
-			}
+		if value := prismCredentialString(account, PrismProjectIDKey, "prism_project_id", "projectId", "project_id", "chatgpt_account_id", "account_id"); value != "" {
+			template.Metadata["projectId"] = value
 		}
-		if cookie := strings.TrimSpace(account.GetCredential("prism_cookie")); cookie != "" {
+		if value := prismCredentialString(account, PrismUserIDKey, "prism_user_id", "userId", "user_id", "chatgpt_user_id"); value != "" {
+			template.Metadata["userId"] = value
+		}
+		if value := prismCredentialString(account, PrismSandboxURLKey, "prism_sandboxUrl", "sandbox_url", "sandboxUrl"); value != "" {
+			template.Metadata["sandbox_url"] = value
+		}
+		if value := prismCredentialString(account, PrismSandboxTokenKey, "prism_sandboxToken", "sandbox_token", "sandboxToken"); value != "" {
+			template.Metadata["sandbox_token"] = value
+		}
+		if cookie := prismCredentialString(account, PrismCookieKey, "prism_Cookie", "cookie"); cookie != "" {
 			template.Headers["Cookie"] = cookie
 		}
+		if token := prismCredentialString(account, "access_token", "oauth_token"); token != "" {
+			if prismHeader(template, "Authorization") == "" {
+				template.Headers["Authorization"] = "Bearer " + token
+			}
+			if _, exists := template.Metadata["sandbox_token"]; !exists {
+				template.Metadata["sandbox_token"] = token
+			}
+		}
+		// OAuth ID tokens carry the same stable account/user identity that the
+		// BPS route uses. Reuse it when explicit Prism metadata is absent.
+		if token := prismCredentialString(account, "id_token", "access_token"); token != "" {
+			if claims, decodeErr := openai.DecodeIDToken(token); decodeErr == nil && claims.OpenAIAuth != nil {
+				if _, exists := template.Metadata["projectId"]; !exists {
+					template.Metadata["projectId"] = claims.OpenAIAuth.ChatGPTAccountID
+				}
+				if _, exists := template.Metadata["userId"]; !exists {
+					template.Metadata["userId"] = claims.OpenAIAuth.ChatGPTUserID
+				}
+			}
+		}
+	}
+	// Normalize templates captured from HAR/browser exports and tolerate the
+	// camelCase/snake_case variants used by older account imports.
+	metadata := template.Metadata
+	if value := prismMapString(metadata, "projectId", "project_id", "projectID"); value != "" {
+		metadata["projectId"] = value
+	}
+	if value := prismMapString(metadata, "userId", "user_id", "userID"); value != "" {
+		metadata["userId"] = value
+	}
+	if value := prismMapString(metadata, "sandbox_url", "sandboxUrl", "sandboxURL"); value != "" {
+		metadata["sandbox_url"] = value
+	}
+	if value := prismMapString(metadata, "sandbox_token", "sandboxToken"); value != "" {
+		metadata["sandbox_token"] = value
+	}
+	if _, ok := metadata["sandbox_url"]; !ok {
+		metadata["sandbox_url"] = prismOrigin
 	}
 	for _, key := range []string{"projectId", "userId", "sandbox_url", "sandbox_token"} {
 		if value, ok := template.Metadata[key].(string); !ok || strings.TrimSpace(value) == "" {
 			return template, fmt.Errorf("prism requires credentials.prism_template.metadata.%s", key)
 		}
 	}
-	if strings.TrimSpace(template.Headers["Cookie"]) == "" && strings.TrimSpace(template.Headers["cookie"]) == "" {
-		return template, fmt.Errorf("prism requires credentials.prism_cookie or prism_template.headers.Cookie")
+	if prismHeader(template, "Cookie") == "" && prismHeader(template, "Authorization") == "" {
+		return template, fmt.Errorf("prism requires credentials.prism_cookie, prism_template.headers.Cookie, or an OpenAI access_token")
 	}
 	return template, nil
 }
@@ -115,6 +184,24 @@ func prismRequestBodyMode(account *Account, body []byte, imageMode bool) ([]byte
 	var request map[string]any
 	if err := json.Unmarshal(body, &request); err != nil {
 		return nil, "", "", fmt.Errorf("prism request must be valid JSON")
+	}
+	if !imageMode {
+		if account.IsPrismIgnoreEncryptedContentEnabled() {
+			cleaned, cleanErr := basispoints.StripEncryptedContent(body)
+			if cleanErr != nil {
+				return nil, "", "", cleanErr
+			}
+			body = cleaned
+			if err := json.Unmarshal(body, &request); err != nil {
+				return nil, "", "", fmt.Errorf("prism request must be valid JSON")
+			}
+		}
+		if reason := prismUnsupportedHostedToolReason(request); reason != "" {
+			if !account.IsPrismOmitUnsupportedToolsEnabled() || prismToolChoiceForcesHosted(request) {
+				return nil, "", "", fmt.Errorf("prism does not support hosted tool capability %q", reason)
+			}
+			prismOmitUnsupportedHostedTools(request)
+		}
 	}
 	model := gjson.GetBytes(body, "model").String()
 	if strings.TrimSpace(model) == "" {
@@ -174,6 +261,65 @@ const prismBridgeInstructions = `You are the inference component of a local Code
 func prismJSONValue(value any) string {
 	raw, _ := json.Marshal(value)
 	return string(raw)
+}
+
+func prismOmitUnsupportedHostedTools(request map[string]any) {
+	tools, ok := request["tools"].([]any)
+	if !ok {
+		return
+	}
+	kept := make([]any, 0, len(tools))
+	for _, raw := range tools {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			kept = append(kept, raw)
+			continue
+		}
+		kind, _ := item["type"].(string)
+		switch strings.ToLower(strings.TrimSpace(kind)) {
+		case "web_search", "web_search_preview", "web_search_preview_2025_03_11", "web_search_preview_2025_08_26", "image_generation", "file_search":
+			continue
+		default:
+			kept = append(kept, raw)
+		}
+	}
+	request["tools"] = kept
+}
+
+func prismUnsupportedHostedToolReason(request map[string]any) string {
+	choice, _ := request["tool_choice"].(string)
+	if choice == "web_search" || choice == "web_search_preview" || choice == "image_generation" || choice == "file_search" {
+		return choice
+	}
+	if selected, ok := request["tool_choice"].(map[string]any); ok {
+		if kind, _ := selected["type"].(string); kind == "web_search" || kind == "web_search_preview" || kind == "image_generation" || kind == "file_search" {
+			return kind
+		}
+	}
+	if tools, ok := request["tools"].([]any); ok {
+		for _, raw := range tools {
+			item, _ := raw.(map[string]any)
+			kind, _ := item["type"].(string)
+			switch strings.ToLower(strings.TrimSpace(kind)) {
+			case "web_search", "web_search_preview", "web_search_preview_2025_03_11", "web_search_preview_2025_08_26", "image_generation", "file_search":
+				return kind
+			}
+		}
+	}
+	return ""
+}
+
+func prismToolChoiceForcesHosted(request map[string]any) bool {
+	choice, ok := request["tool_choice"].(string)
+	if ok {
+		return choice == "web_search" || choice == "web_search_preview" || choice == "image_generation" || choice == "file_search"
+	}
+	selected, ok := request["tool_choice"].(map[string]any)
+	if !ok {
+		return false
+	}
+	kind, _ := selected["type"].(string)
+	return strings.HasPrefix(strings.ToLower(kind), "web_search") || kind == "image_generation" || kind == "file_search"
 }
 
 func prismHeader(template prismTemplate, key string) string {
@@ -284,7 +430,7 @@ func (s *OpenAIGatewayService) prismCall(ctx context.Context, account *Account, 
 	req.Header.Set("Referer", prismOrigin+"/")
 	for key, value := range template.Headers {
 		lower := strings.ToLower(strings.TrimSpace(key))
-		if lower == "host" || lower == "content-length" || lower == "authorization" || lower == "cookie" {
+		if lower == "host" || lower == "content-length" || lower == "cookie" {
 			continue
 		}
 		if strings.TrimSpace(value) != "" {
@@ -296,6 +442,9 @@ func (s *OpenAIGatewayService) prismCall(ctx context.Context, account *Account, 
 	}
 	if cookie := prismHeader(template, "Cookie"); cookie != "" {
 		req.Header.Set("Cookie", cookie)
+	}
+	if authorization := prismHeader(template, "Authorization"); authorization != "" {
+		req.Header.Set("Authorization", authorization)
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfilePrism))
 	resp, err := s.httpUpstream.Do(req, prismProxyURL(account), account.ID, account.Concurrency)
@@ -311,6 +460,27 @@ func (s *OpenAIGatewayService) prismCall(ctx context.Context, account *Account, 
 		return nil, resp.StatusCode, fmt.Errorf("prism upstream returned HTTP %d", resp.StatusCode)
 	}
 	return raw, resp.StatusCode, nil
+}
+
+func (s *OpenAIGatewayService) disablePrismOn403(ctx context.Context, account *Account) bool {
+	if account == nil || !account.IsPrismAutoDisableOn403Enabled() || isQualityObservation(ctx) {
+		return false
+	}
+	repo, ok := s.accountRepo.(AccountPrismRepository)
+	if !ok {
+		return false
+	}
+	stateCtx, cancel := openAIAccountStateContext(ctx)
+	defer cancel()
+	changed, err := repo.DisablePrismOn403(stateCtx, account)
+	if err != nil {
+		logger.LegacyPrintf("service.openai_prism", "auto-disable failed: account_id=%d error_type=%T", account.ID, err)
+		return false
+	}
+	if changed {
+		logger.LegacyPrintf("service.openai_prism", "automatically disabled Prism after upstream HTTP 403: account_id=%d", account.ID)
+	}
+	return changed
 }
 
 func (s *OpenAIGatewayService) forwardPrism(ctx context.Context, c *gin.Context, account *Account, body []byte, start time.Time) (*OpenAIForwardResult, error) {
@@ -364,6 +534,9 @@ func (s *OpenAIGatewayService) executePrismRequest(requestCtx context.Context, a
 	}
 	startRaw, status, err := s.prismCall(requestCtx, account, prismStartPath, requestBody)
 	if err != nil {
+		if status == http.StatusForbidden {
+			s.disablePrismOn403(requestCtx, account)
+		}
 		setOpsUpstreamError(c, status, "Prism upstream request failed", "")
 		recordPrismUpstreamError(c, account, status, err.Error())
 		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "server_error", "code": "prism_upstream_error", "message": err.Error()}})
@@ -399,8 +572,11 @@ func (s *OpenAIGatewayService) executePrismRequest(requestCtx context.Context, a
 			return nil, status, requestCtx.Err()
 		case <-timer.C:
 		}
-		pollRaw, _, pollErr := s.prismCall(requestCtx, account, prismStatusPath, pollBody)
+		pollRaw, pollStatus, pollErr := s.prismCall(requestCtx, account, prismStatusPath, pollBody)
 		if pollErr != nil {
+			if pollStatus == http.StatusForbidden {
+				s.disablePrismOn403(requestCtx, account)
+			}
 			setOpsUpstreamError(c, status, "Prism status polling failed", "")
 			recordPrismUpstreamError(c, account, status, pollErr.Error())
 			return nil, status, pollErr

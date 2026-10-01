@@ -2203,12 +2203,45 @@ const (
 // normal Codex OAuth token.
 const PrismProtocolKey = "openai_prism"
 
+const (
+	PrismTemplateKey                    = "prism_template"
+	PrismCookieKey                      = "prism_cookie"
+	PrismProjectIDKey                   = "prism_projectId"
+	PrismUserIDKey                      = "prism_userId"
+	PrismSandboxURLKey                  = "prism_sandbox_url"
+	PrismSandboxTokenKey                = "prism_sandbox_token"
+	PrismOmitUnsupportedToolsKey        = "openai_prism_omit_unsupported_tools"
+	PrismIgnoreEncryptedContentKey      = "openai_prism_ignore_encrypted_content"
+	PrismAutoDisableOn403Key            = "openai_prism_auto_disable_on_403"
+	PrismCacheCreationAsInputKey        = "openai_prism_cache_creation_as_input"
+)
+
 func (a *Account) IsPrismProtocol() bool {
 	if a == nil || !a.IsOpenAI() || a.Extra == nil {
 		return false
 	}
 	enabled, _ := a.Extra[PrismProtocolKey].(bool)
 	return enabled
+}
+
+func (a *Account) prismSetting(key string) bool {
+	return a != nil && a.IsPrismProtocol() && a.Extra != nil && a.Extra[key] == true
+}
+
+func (a *Account) IsPrismOmitUnsupportedToolsEnabled() bool {
+	return a.prismSetting(PrismOmitUnsupportedToolsKey)
+}
+
+func (a *Account) IsPrismIgnoreEncryptedContentEnabled() bool {
+	return a.prismSetting(PrismIgnoreEncryptedContentKey)
+}
+
+func (a *Account) IsPrismAutoDisableOn403Enabled() bool {
+	return a.prismSetting(PrismAutoDisableOn403Key)
+}
+
+func (a *Account) IsPrismCacheCreationAsInputEnabled() bool {
+	return a.prismSetting(PrismCacheCreationAsInputKey)
 }
 
 // IsExcelBPSEnabled routes an existing ChatGPT OAuth account to the BPS gateway.

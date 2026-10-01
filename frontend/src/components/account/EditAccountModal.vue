@@ -1940,6 +1940,19 @@
             <span>{{ t('admin.accounts.openai.prismProtocol') }}</span>
           </label>
           <p class="mt-1 text-xs text-amber-600 dark:text-amber-400">{{ t('admin.accounts.openai.prismProtocolDesc') }}</p>
+          <div v-if="prismProtocolEnabled" class="mt-3 space-y-3 rounded border border-gray-200 p-3 dark:border-dark-600">
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div><label class="input-label">{{ t('admin.accounts.openai.prismProjectId') }}</label><input v-model="prismProjectID" class="input" autocomplete="off" /></div>
+              <div><label class="input-label">{{ t('admin.accounts.openai.prismUserId') }}</label><input v-model="prismUserID" class="input" autocomplete="off" /></div>
+              <div><label class="input-label">{{ t('admin.accounts.openai.prismSandboxUrl') }}</label><input v-model="prismSandboxURL" class="input" autocomplete="off" /></div>
+              <div><label class="input-label">{{ t('admin.accounts.openai.prismSandboxToken') }}</label><input v-model="prismSandboxToken" class="input" type="password" autocomplete="new-password" /></div>
+              <div class="md:col-span-2"><label class="input-label">{{ t('admin.accounts.openai.prismCookie') }}</label><input v-model="prismCookie" class="input" type="password" autocomplete="new-password" /></div>
+            </div>
+            <label class="flex items-center gap-2 text-sm"><input v-model="prismOmitUnsupportedTools" type="checkbox" class="h-4 w-4" /> <span>{{ t('admin.accounts.openai.prismOmitUnsupportedTools') }}</span></label>
+            <label class="flex items-center gap-2 text-sm"><input v-model="prismIgnoreEncryptedContent" type="checkbox" class="h-4 w-4" /> <span>{{ t('admin.accounts.openai.prismIgnoreEncryptedContent') }}</span></label>
+            <label class="flex items-center gap-2 text-sm"><input v-model="prismAutoDisableOn403" type="checkbox" class="h-4 w-4" /> <span>{{ t('admin.accounts.openai.prismAutoDisableOn403') }}</span></label>
+            <label class="flex items-center gap-2 text-sm"><input v-model="prismCacheCreationAsInput" type="checkbox" class="h-4 w-4" /> <span>{{ t('admin.accounts.openai.prismCacheCreationAsInput') }}</span></label>
+          </div>
         </div>
       </div>
 
@@ -3913,6 +3926,15 @@ const customBaseUrl = ref('')
 // OpenAI 自动透传开关（OAuth/API Key）
 const excelBPSEnabled = ref(false)
 const prismProtocolEnabled = ref(false)
+const prismCookie = ref('')
+const prismProjectID = ref('')
+const prismUserID = ref('')
+const prismSandboxURL = ref('')
+const prismSandboxToken = ref('')
+const prismOmitUnsupportedTools = ref(false)
+const prismIgnoreEncryptedContent = ref(false)
+const prismAutoDisableOn403 = ref(false)
+const prismCacheCreationAsInput = ref(false)
 const excelBPSMode = ref<ExcelBPSMode>('initial')
 const excelBPSProtocol = ref<ExcelBPSProtocol>('excel')
 const excelBPSProtocolOptions = computed(() => [
@@ -4484,6 +4506,15 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   excelBPSIgnoreEncryptedContent.value = false
   excelBPSAutoMoveOn403.value = false
   excelBPS403TargetGroupID.value = ''
+  prismCookie.value = ''
+  prismProjectID.value = ''
+  prismUserID.value = ''
+  prismSandboxURL.value = ''
+  prismSandboxToken.value = ''
+  prismOmitUnsupportedTools.value = false
+  prismIgnoreEncryptedContent.value = false
+  prismAutoDisableOn403.value = false
+  prismCacheCreationAsInput.value = false
   copilotSDKEnabled.value = false
   openaiPassthroughEnabled.value = false
   openaiFlattenNamespacesEnabled.value = false
@@ -4505,6 +4536,18 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   webSearchEmulationMode.value = 'default'
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'setup-token' || newAccount.type === 'apikey')) {
     prismProtocolEnabled.value = extra?.openai_prism === true
+    const prismCredentials = (newAccount.credentials || {}) as Record<string, unknown>
+    const prismTemplate = (prismCredentials.prism_template || {}) as Record<string, unknown>
+    const prismMetadata = (prismTemplate.metadata || {}) as Record<string, unknown>
+    prismCookie.value = typeof prismCredentials.prism_cookie === 'string' ? prismCredentials.prism_cookie : ''
+    prismProjectID.value = String(prismCredentials.prism_projectId || prismCredentials.prism_project_id || prismMetadata.projectId || '')
+    prismUserID.value = String(prismCredentials.prism_userId || prismCredentials.prism_user_id || prismMetadata.userId || '')
+    prismSandboxURL.value = String(prismCredentials.prism_sandbox_url || prismMetadata.sandbox_url || '')
+    prismSandboxToken.value = String(prismCredentials.prism_sandbox_token || prismMetadata.sandbox_token || '')
+    prismOmitUnsupportedTools.value = prismProtocolEnabled.value && extra?.openai_prism_omit_unsupported_tools === true
+    prismIgnoreEncryptedContent.value = prismProtocolEnabled.value && extra?.openai_prism_ignore_encrypted_content === true
+    prismAutoDisableOn403.value = newAccount.type === 'oauth' && extra?.openai_prism_auto_disable_on_403 === true
+    prismCacheCreationAsInput.value = prismProtocolEnabled.value && extra?.openai_prism_cache_creation_as_input === true
     excelBPSEnabled.value = newAccount.type === 'oauth' && !prismProtocolEnabled.value && extra?.openai_excel_bps === true
     excelBPSMode.value = extra?.openai_excel_bps_config_mode === 'defaults' ? 'defaults' : 'initial'
     excelBPSProtocol.value = normalizeExcelBPSProtocol(extra?.openai_excel_bps_protocol)
@@ -6037,6 +6080,19 @@ const handleSubmit = async () => {
       } else {
         delete newExtra.openai_prism
       }
+      const prismCredentials = (updatePayload.credentials as Record<string, unknown>) || { ...((props.account.credentials as Record<string, unknown>) || {}) }
+      if (prismProtocolEnabled.value) {
+        const setPrismCredential = (key: string, value: string) => {
+          const trimmed = value.trim()
+          if (trimmed) prismCredentials[key] = trimmed
+        }
+        setPrismCredential('prism_cookie', prismCookie.value)
+        setPrismCredential('prism_projectId', prismProjectID.value)
+        setPrismCredential('prism_userId', prismUserID.value)
+        setPrismCredential('prism_sandbox_url', prismSandboxURL.value)
+        setPrismCredential('prism_sandbox_token', prismSandboxToken.value)
+      }
+      updatePayload.credentials = prismCredentials
       if (props.account.type === 'oauth') {
         applyAccountRPMSettings(newExtra, {
           enabled: rpmLimitEnabled.value,
@@ -6105,6 +6161,14 @@ const handleSubmit = async () => {
       if (newExtra.openai_excel_bps === true || preserveDisabledBPS) {
         newExtra.openai_excel_bps_403_recovery_interval_minutes = bpsRecoveryIntervalOrDefault(excelBPSRecoveryIntervalMinutes.value)
       }
+      if (prismProtocolEnabled.value && prismOmitUnsupportedTools.value) newExtra.openai_prism_omit_unsupported_tools = true
+      else delete newExtra.openai_prism_omit_unsupported_tools
+      if (prismProtocolEnabled.value && prismIgnoreEncryptedContent.value) newExtra.openai_prism_ignore_encrypted_content = true
+      else delete newExtra.openai_prism_ignore_encrypted_content
+      if (prismProtocolEnabled.value && prismAutoDisableOn403.value) newExtra.openai_prism_auto_disable_on_403 = true
+      else delete newExtra.openai_prism_auto_disable_on_403
+      if (prismProtocolEnabled.value && prismCacheCreationAsInput.value) newExtra.openai_prism_cache_creation_as_input = true
+      else delete newExtra.openai_prism_cache_creation_as_input
       if ((newExtra.openai_excel_bps === true || preserveDisabledBPS) && excelBPSAutoDisableOn403.value && excelBPSAutoRecoverOn403.value) {
         newExtra.openai_excel_bps_auto_recover_on_403 = true
       } else {

@@ -69,7 +69,7 @@ Sub2API 是一个 AI API 网关平台，用于分发和管理 AI 产品订阅的
 
 ### Prism 协议账号配置
 
-Prism 是显式开关，账号 `extra` 设置 `openai_prism=true` 后才会启用。凭据中需要保存一个 `prism_template` JSON（来自 prism2api 的 HAR/template，不能提交到仓库）以及 `prism_cookie`。模板至少要包含以下字段：
+Prism 是显式开关，账号 `extra` 设置 `openai_prism=true` 后才会启用。管理后台可以直接填写 Cookie、项目/用户 ID、沙盒 URL/token；后端会把这些字段归一化成标准模板。也兼容保存一个 `prism_template` JSON（来自 prism2api 的 HAR/template，不能提交到仓库）以及 `prism_cookie`。模板至少要包含以下字段：
 
 ```json
 {
@@ -83,7 +83,7 @@ Prism 是显式开关，账号 `extra` 设置 `openai_prism=true` 后才会启�
 }
 ```
 
-也可以把四个元数据拆成 `prism_projectId`、`prism_userId`、`prism_sandbox_url`、`prism_sandbox_token` 凭据字段。请求会使用 `response_with_tools_start` 提交任务，再用 `response_with_tools_status` 轮询；Cookie、sandbox token、HAR 和模板都属于敏感凭据。当前适配器支持文本 Responses、图片生成/编辑和兼容 SSE；图片请求会像 BPS 一样转换为 Responses `image_generation` 工具请求并由 Prism 完成后还原为 Images API 响应。WebSocket、Embeddings、文件输入、原生远程工具、背景任务及跨轮工具 continuation 仍不支持，不能回退到其他协议。
+也可以把四个元数据拆成 `prism_projectId`、`prism_userId`、`prism_sandbox_url`、`prism_sandbox_token` 凭据字段。归一化会优先复用账号已有的 Prism 字段，其次复用 OpenAI OAuth 的 `access_token`、`chatgpt_account_id`、`chatgpt_user_id` 和 ID token 身份；只有这些都缺失时才报配置错误。请求会使用 `response_with_tools_start` 提交任务，再用 `response_with_tools_status` 轮询；Cookie、sandbox token、HAR 和模板都属于敏感凭据。当前适配器支持文本 Responses、图片生成/编辑和兼容 SSE；图片请求会像 BPS 一样转换为 Responses `image_generation` 工具请求并由 Prism 完成后还原为 Images API 响应。WebSocket、Embeddings、文件输入、原生远程工具、背景任务及跨轮工具 continuation 仍不支持，不能回退到其他协议。账号设置还支持省略不支持的托管工具、忽略历史加密消息、403 自动关闭 Prism，以及将缓存创建 token 按普通输入计费；强制选择不支持的托管工具仍会明确失败。
 
 ## 核心功能
 

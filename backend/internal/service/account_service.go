@@ -134,6 +134,11 @@ type AccountExcelBPSRepository interface {
 	DisableExcelBPSOn403(ctx context.Context, account *Account) (bool, error)
 }
 
+// AccountPrismRepository disables only Prism after an opted-in upstream 403.
+type AccountPrismRepository interface {
+	DisablePrismOn403(ctx context.Context, account *Account) (bool, error)
+}
+
 // AccountExcelBPSGroupRepository applies an opted-in group action atomically
 // after rechecking the account identity, policy and current memberships.
 type AccountExcelBPSGroupRepository interface {
