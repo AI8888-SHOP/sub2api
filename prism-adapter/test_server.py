@@ -52,7 +52,7 @@ class AdapterTests(unittest.TestCase):
         cookies = adapter.parse_cookie_header("prism_session_token=session; __cf_bm=clearance=value")
         self.assertEqual([item["name"] for item in cookies], ["prism_session_token", "__cf_bm"])
         self.assertTrue(all(item["domain"] == "prism.openai.com" and item["path"] == "/" for item in cookies))
-        self.assertEqual([item["name"] for item in adapter.parse_cookie_header("chatgpt_session=do-not-forward; prism-did=did")], ["prism-did"])
+        self.assertEqual([item["name"] for item in adapter.parse_cookie_header("chatgpt_session=do-not-forward; cf_clearance=clear; prism-did=did")], ["cf_clearance", "prism-did"])
         with self.assertRaises(adapter.AdapterError):
             adapter.parse_cookie_header("prism_session_token=bad\nvalue")
 

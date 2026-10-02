@@ -36,7 +36,7 @@ REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 REASONING_SUMMARIES = {"none", "auto", "concise", "detailed"}
 COOKIE_NAME = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 PRISM_COOKIE_PREFIXES = ("prism_", "prism-", "__cf_", "_cfuvid", "_dd_", "crixet_")
-PRISM_COOKIE_NAMES = {"oai-did", "oai-sc"}
+PRISM_COOKIE_NAMES = {"cf_clearance", "oai-did", "oai-sc"}
 # These records belong to the Responses protocol/tool executor, not to the
 # plain-text Prism turn. Drop them when replaying a client's history.
 IGNORABLE_INPUT_TYPES = {
