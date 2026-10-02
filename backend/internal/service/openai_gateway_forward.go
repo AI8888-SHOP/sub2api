@@ -38,6 +38,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, markOpenAIInitialAdmissionError(admissionErr)
 	}
 	account = latest
+	c.Writer.Header().Del(prismCodexProtocolHeader)
+	if err := rejectUnsupportedPrismCodexEndpoint(c, account); err != nil {
+		return nil, err
+	}
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
 	// A failed account attempt must not leave a bypass reason on a later BPS response.
@@ -87,6 +91,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 	if account.IsExcelBPSEnabledForModel(modelForBPS) {
 		return s.forwardExcelBPS(ctx, c, account, body, startTime)
+	}
+	if account.IsPrismCodexEnabled() {
+		return s.forwardPrismCodex(ctx, c, account, body, startTime)
 	}
 
 	if account.IsOpenAIOAuthLike() {
@@ -1639,6 +1646,9 @@ func shouldAdaptDeepSeekResponsesClientTools(account *Account, body []byte, comp
 }
 
 func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool) (*http.Request, error) {
+	if account.IsPrismCodexEnabled() {
+		return s.buildPrismCodexRequest(ctx, c, account, body, token)
+	}
 	defer requesttiming.Observe(ctx, "build_upstream_request")()
 	// Determine target URL based on account type
 	var targetURL string

@@ -1093,6 +1093,12 @@ func (s *AccountTestService) buildOpenAIOAuthUpstreamModelsRequest(ctx context.C
 		req.Header.Set("Authorization", "Bearer "+accessToken)
 	}
 
+	if account.IsPrismCodexEnabled() {
+		token := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
+		req.Header = prismCodexHeaders(token, excelBPSAccountID(credentialAccount, token), "")
+		req.Header.Set("Accept", "application/json")
+		return req, nil
+	}
 	identity := resolveCodexOutboundIdentity(credentialAccount.GetOpenAIUserAgent())
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Originator", identity.originator)

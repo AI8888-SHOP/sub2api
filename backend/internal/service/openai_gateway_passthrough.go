@@ -138,6 +138,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 ) (*OpenAIForwardResult, error) {
 	requestedModel := reqModel
 	upstreamPassthroughModel := ""
+	if account.IsPrismCodexEnabled() {
+		upstreamPassthroughModel = gjson.GetBytes(body, "model").String()
+	}
 	if isOpenAIResponsesCompactPath(c) && !account.IsCopilotSDKEnabled() {
 		compactMappedModel := s.resolveOpenAICompactFallbackModel(account, reqModel)
 		if compactMappedModel != "" && compactMappedModel != reqModel {
@@ -151,7 +154,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 	}
 
-	if account != nil && account.UsesOpenAICodexProtocol() {
+	if account != nil && account.UsesOpenAICodexProtocol() && !account.IsPrismCodexEnabled() {
 		if rejectReason := detectOpenAIPassthroughInstructionsRejectReason(reqModel, body); rejectReason != "" {
 			rejectMsg := "OpenAI codex passthrough requires a non-empty instructions field"
 			MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
@@ -225,7 +228,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			}
 		}
 	}
-	if account != nil && account.IsOpenAI() && !account.IsCopilotSDKEnabled() {
+	if account != nil && account.IsOpenAI() && !account.IsCopilotSDKEnabled() && !account.IsPrismCodexEnabled() {
 		responsesLite := isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) || isOpenAIResponsesLiteWebSocketPayload(body)
 		normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesWebSocketCompatibilityBody(body, account, responsesLite)
 		if normalizeErr != nil {
@@ -283,6 +286,12 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		return nil, policyErr
 	}
 	body = updatedBody
+	if account.IsPrismCodexEnabled() {
+		body, err = normalizePrismCodexBody(body, false)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	apiKey := getAPIKeyFromContext(c)
 	// 同一 attempt 的最终 model/body 只判定一次，权限检查与后续图片状态设置共用该结果。
@@ -641,6 +650,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	body []byte,
 	token string,
 ) (*http.Request, error) {
+	if account.IsPrismCodexEnabled() {
+		return s.buildPrismCodexRequest(ctx, c, account, body, token)
+	}
 	defer requesttiming.Observe(ctx, "build_upstream_request")()
 	targetURL := openaiPlatformAPIURL
 	switch account.Type {

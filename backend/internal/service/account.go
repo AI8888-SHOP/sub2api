@@ -2176,6 +2176,9 @@ func (a *Account) IsOveragesEnabled() bool {
 // 兼容字段：accounts.extra.openai_oauth_passthrough（历史 OAuth 开关）。
 // 字段缺失或类型不正确时，按 false（关闭）处理。
 func (a *Account) IsOpenAIPassthroughEnabled() bool {
+	if a.IsPrismCodexEnabled() {
+		return false
+	}
 	if a.IsCopilotSDKEnabled() {
 		return true
 	}
@@ -2202,6 +2205,9 @@ const (
 // The historical name is retained for API compatibility with the existing
 // scheduler and account settings.
 func (a *Account) IsExcelBPSEnabled() bool {
+	if a.IsPrismCodexEnabled() {
+		return false
+	}
 	if a == nil || a.Platform != PlatformOpenAI || a.Type != AccountTypeOAuth || a.IsShadow() || a.IsOpenAIAgentIdentity() || a.IsOpenAIPersonalAccessToken() {
 		return false
 	}
@@ -2385,6 +2391,9 @@ func (a *Account) IsCopilotSDKEnabled() bool {
 // 1. 按账号类型读取分类型字段
 // 2. 分类型字段缺失时，回退兼容字段
 func (a *Account) IsOpenAIResponsesWebSocketV2Enabled() bool {
+	if a.IsPrismCodexEnabled() {
+		return false // Client ingress is HTTP/SSE; continuation WS is profile-owned.
+	}
 	if a.IsCopilotSDKEnabled() || a.isExcelBPSAllModelsEnabled() {
 		return false
 	}
@@ -2456,6 +2465,9 @@ func normalizeOpenAIWSIngressDefaultMode(mode string) string {
 // 3. 兼容 enabled 旧字段（bool）
 // 4. defaultMode（非法时回退 ctx_pool）
 func (a *Account) ResolveOpenAIResponsesWebSocketV2Mode(defaultMode string) string {
+	if a.IsPrismCodexEnabled() {
+		return OpenAIWSIngressModeOff
+	}
 	if a.IsCopilotSDKEnabled() || a.isExcelBPSAllModelsEnabled() {
 		return OpenAIWSIngressModeOff
 	}

@@ -141,6 +141,10 @@ func (s *OpenAIGatewayService) doOpenAIProxyAttempt(req *http.Request, account *
 			err = &runtimeProxyEgressError{error: err, target: target}
 		}
 	}()
+	if account.IsPrismCodexEnabled() {
+		resp, err = s.doPrismCodexUpstream(req, target.url, account)
+		return markOpenAIResponseEgress(resp, req, target.proxyID), err
+	}
 	if s.pluginManager != nil && !s.codexTicketRequestBound(req, account) {
 		resp, handled, err := s.pluginManager.RoundTripOpenAIOAuth(req.Context(), req, target.url, account)
 		if handled {
@@ -197,6 +201,10 @@ func (s *OpenAIGatewayService) doUpstreamWithProxyFallback(ctx context.Context, 
 		// standard net/http trace callbacks. Its positive signal is a veto.
 		var pluginErr *PluginTransportError
 		if errors.As(err, &pluginErr) && pluginErr.RequestSent {
+			return resp, err
+		}
+		var prismSent *prismCodexRequestSentError
+		if errors.As(err, &prismSent) {
 			return resp, err
 		}
 		next, ok := chain.next(ctx, s)

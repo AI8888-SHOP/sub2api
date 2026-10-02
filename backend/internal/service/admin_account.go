@@ -426,6 +426,9 @@ func normalizeOpenAILongContextBillingUpdateExtra(account *Account, input *Updat
 // Grok media eligibility helpers live in account_grok_media_eligibility.go.
 
 func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]any) (*Account, error) {
+	if err := normalizePrismCodexExtra(accountExtra); err != nil {
+		return nil, err
+	}
 	accountExtra = MergeOpenAICodexTicketExtra(accountExtra, nil)
 	// Probe/session state is system-managed. New accounts always start with automatic refresh disabled.
 	delete(accountExtra, UpstreamBillingProbeEnabledExtraKey)
@@ -449,6 +452,9 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 		Priority:    input.Priority,
 		Status:      StatusActive,
 		Schedulable: true,
+	}
+	if err := validatePrismCodexAccount(account); err != nil {
+		return nil, err
 	}
 	if input.ProbeEnabled != nil && *input.ProbeEnabled {
 		if !isUpstreamBillingProbeAccount(account) {
@@ -625,6 +631,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if input.Extra != nil {
 		normalizedExtra, err = normalizeOpenAILongContextBillingUpdateExtra(account, input)
 		if err != nil {
+			return nil, err
+		}
+		if err := normalizePrismCodexExtra(normalizedExtra); err != nil {
 			return nil, err
 		}
 		normalizedExtra, err = normalizeGrokMediaEligibilityUpdateExtra(account, input, normalizedExtra)
@@ -913,6 +922,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if err := s.validateExcelBPS403GroupSettings(ctx, account); err != nil {
 		return nil, err
 	}
+	if err := validatePrismCodexAccount(account); err != nil {
+		return nil, err
+	}
 	billingSettingsAppliedAtomically := false
 	updater := s.accountBillingRepo
 	if updater == nil {
@@ -985,13 +997,17 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 // UpdateAccountExtra 仅对 Extra JSONB 做 key 级合并，避免覆盖其它运行态键
 // （如 model_rate_limits / passive_usage_* 等）。
 func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
+	if err := normalizePrismCodexExtra(updates); err != nil {
+		return err
+	}
 	if err := ValidateAccountCostMultiplierExtra(updates); err != nil {
 		return err
 	}
 	_, moveChanged := updates[ExcelBPSAutoMoveOn403Key]
 	_, targetChanged := updates[ExcelBPS403TargetGroupIDKey]
 	_, bpsChanged := updates["openai_excel_bps"]
-	if moveChanged || targetChanged || bpsChanged {
+	_, prismChanged := updates[PrismCodexEnabledKey]
+	if moveChanged || targetChanged || bpsChanged || prismChanged {
 		account, err := s.accountRepo.GetByID(ctx, id)
 		if err != nil {
 			return err
@@ -1000,6 +1016,9 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 		merged.Extra = make(map[string]any, len(account.Extra)+len(updates))
 		maps.Copy(merged.Extra, account.Extra)
 		maps.Copy(merged.Extra, updates)
+		if err := validatePrismCodexAccount(&merged); err != nil {
+			return err
+		}
 		if err := s.validateExcelBPS403GroupSettings(ctx, &merged); err != nil {
 			return err
 		}

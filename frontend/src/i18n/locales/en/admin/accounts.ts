@@ -649,6 +649,10 @@ export default {
       },
       // OpenAI specific hints
       openai: {
+        prismCodex: 'Prism / Codex compatibility mode',
+        prismCodexApply: 'Apply Prism / Codex mode to selected accounts',
+        prismCodexDesc: 'Reuse the current ChatGPT OAuth credentials with Prism-style Codex requests and transport. Mutually exclusive with Excel / Google Sheets BPS. This is not the old Prism Web Agent; no cookies, projectId or extra service is required.',
+        prismCodexScope: 'Supports HTTP Responses / Chat Completions, SSE, tools and image inputs. Continuations with previous_response_id use WebSocket internally. Client WebSocket ingress, standalone Images API, compact and input_tokens are unsupported. Failures do not fall back to BPS; automatic BPS rules are inactive in this mode.',
         baseUrlHint: 'Leave default for official OpenAI API',
         apiKeyHint: 'Your OpenAI API Key',
         oauthPassthrough: 'Auto passthrough (auth only)',

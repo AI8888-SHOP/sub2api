@@ -36,6 +36,10 @@ func NewOpenAIWSProtocolResolver(cfg *config.Config) OpenAIWSProtocolResolver {
 }
 
 func (r *defaultOpenAIWSProtocolResolver) Resolve(account *Account) OpenAIWSProtocolDecision {
+	if account.IsPrismCodexEnabled() {
+		// The compatibility adapter owns HTTP vs WS; never use the native pool.
+		return openAIWSHTTPDecision("prism_codex")
+	}
 	if account == nil {
 		return openAIWSHTTPDecision("account_missing")
 	}

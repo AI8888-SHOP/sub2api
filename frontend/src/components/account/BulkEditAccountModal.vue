@@ -32,6 +32,15 @@
       </div>
 
       <!-- Excel / BPS protocol (ChatGPT OAuth only) -->
+      <div v-if="allOpenAIOAuthOnly">
+        <label class="mb-3 flex items-center gap-2 text-sm">
+          <input v-model="enablePrismCodex" type="checkbox" data-testid="bulk-apply-prism-codex" />
+          {{ t('admin.accounts.openai.prismCodexApply') }}
+        </label>
+        <fieldset :disabled="!enablePrismCodex" :class="!enablePrismCodex && 'opacity-50'">
+          <PrismCodexSettings v-model="prismCodexEnabled" />
+        </fieldset>
+      </div>
       <div v-if="allOpenAIOAuthOnly" class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3 flex items-center justify-between">
           <div class="flex-1 pr-4">
@@ -1590,6 +1599,8 @@ import { DEFAULT_ACCOUNT_COST_MULTIPLIER, isValidAccountCostMultiplier } from '@
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ExcelBPSModeSwitches from './ExcelBPSModeSwitches.vue'
+import PrismCodexSettings from './PrismCodexSettings.vue'
+import { usePrismCodexMode } from '@/composables/usePrismCodexMode'
 import { type ExcelBPSMode, type ExcelBPSProtocol } from '@/utils/excelBPSDefaults'
 import { useExcelBPSDefaults } from '@/composables/useExcelBPSDefaults'
 import { DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES, MAX_BPS_RECOVERY_INTERVAL_MINUTES, isValidBPSRecoveryInterval, bpsRecoveryIntervalOrDefault } from '@/utils/excelBPSRecovery'
@@ -1823,6 +1834,8 @@ const rateMultiplier = ref(1)
 const status = ref<'active' | 'inactive'>('active')
 const groupIds = ref<number[]>([])
 const excelBPSEnabled = ref(false)
+const enablePrismCodex = ref(false)
+const prismCodexEnabled = usePrismCodexMode(excelBPSEnabled)
 const excelBPSMode = ref<ExcelBPSMode>('initial')
 const excelBPSProtocol = ref<ExcelBPSProtocol>('excel')
 const excelBPSProtocolOptions = computed(() => [
@@ -1846,7 +1859,7 @@ const bpsDefaults = useExcelBPSDefaults({
   enabled: excelBPSEnabled,
   mode: excelBPSMode,
   available: () => !authStore.isObserver,
-  context: () => JSON.stringify([props.show, props.accountIds, props.selectedPlatforms, props.selectedTypes, authStore.user?.id, authStore.isObserver]),
+  context: () => JSON.stringify([props.show, props.accountIds, props.selectedPlatforms, props.selectedTypes, authStore.user?.id, authStore.isObserver, prismCodexEnabled.value]),
   fields: {
     all_models: excelBPSAllModels, models: excelBPSModels,
     omit_unsupported_tools: excelBPSOmitUnsupportedTools, ignore_images: excelBPSIgnoreImages,
@@ -2157,7 +2170,12 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     }
   }
 
-  if (enableExcelBPS.value && allOpenAIOAuthOnly.value) {
+  if (enablePrismCodex.value && allOpenAIOAuthOnly.value) {
+    const extra = ensureExtra()
+    extra.openai_prism_codex = prismCodexEnabled.value
+    if (prismCodexEnabled.value) extra.openai_excel_bps = false
+  }
+  if (enableExcelBPS.value && allOpenAIOAuthOnly.value && !(enablePrismCodex.value && prismCodexEnabled.value)) {
     const extra = ensureExtra()
     extra.openai_excel_bps = excelBPSEnabled.value
     extra.openai_excel_bps_config_mode = excelBPSEnabled.value ? excelBPSMode.value : null
@@ -2616,7 +2634,9 @@ watch(
 
       // Reset all values
       baseUrl.value = ''
-      excelBPSEnabled.value = false
+  excelBPSEnabled.value = false
+  enablePrismCodex.value = false
+  prismCodexEnabled.value = false
       excelBPSMode.value = 'initial'
       excelBPSProtocol.value = 'excel'
       excelBPSAllModels.value = false

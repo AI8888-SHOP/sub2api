@@ -617,6 +617,9 @@ func (s *OpenAIGatewayService) ForwardImages(
 		return nil, admissionErr
 	}
 	account = latest
+	if err := rejectUnsupportedPrismCodexEndpoint(c, account); err != nil {
+		return nil, err
+	}
 	switch account.Type {
 	case AccountTypeAPIKey:
 		return s.forwardOpenAIImagesAPIKey(ctx, c, account, body, parsed, channelMappedModel)

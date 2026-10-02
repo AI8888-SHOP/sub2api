@@ -3022,6 +3022,7 @@
         />
       </div>
 
+      <PrismCodexSettings v-if="form.platform === 'openai' && accountCategory === 'oauth-based'" v-model="prismCodexEnabled" />
       <AccountAutoBPSSection v-if="autoBPSAvailable" v-model:draft="autoBPS.draft.value" :groups="groups" />
 
       <!-- OpenAI 自动透传开关（OAuth/API Key） -->
@@ -3909,6 +3910,8 @@ import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import AccountAutoBPSSection from '@/components/account/AccountAutoBPSSection.vue'
+import PrismCodexSettings from './PrismCodexSettings.vue'
+import { usePrismCodexMode } from '@/composables/usePrismCodexMode'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import AccountRpmSettings from '@/components/account/AccountRpmSettings.vue'
@@ -4134,7 +4137,11 @@ const twoFABusy = ref(false)
 const isOpenAITwoFA = computed(() => form.platform === 'openai' && accountCategory.value === 'oauth-based' && openaiTwoFA.value)
 // 「降智后自动开启 BPS」：OpenAI OAuth / 2FA 添加时可选，账号建好后按这里的设置给每个新账号建一条质量运维规则。
 const autoBPS = useAccountAutoBPS()
-const autoBPSAvailable = computed(() => form.platform === 'openai' && accountCategory.value === 'oauth-based')
+const prismCodexEnabled = usePrismCodexMode(computed({
+  get: () => autoBPS.draft.value.enabled,
+  set: value => { autoBPS.draft.value.enabled = value }
+}))
+const autoBPSAvailable = computed(() => form.platform === 'openai' && accountCategory.value === 'oauth-based' && !prismCodexEnabled.value)
 const submitting = ref(false)
 const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
@@ -5287,6 +5294,7 @@ const resetForm = () => {
   step.value = 1
   openaiTwoFA.value = false
   autoBPS.reset()
+  prismCodexEnabled.value = false
   twoFABusy.value = false
   form.name = ''
   form.notes = ''
@@ -5418,6 +5426,10 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
   }
 
   const extra: Record<string, unknown> = { ...(base || {}) }
+  if (accountCategory.value === 'oauth-based' && prismCodexEnabled.value) {
+    extra.openai_prism_codex = true
+    extra.openai_excel_bps = false
+  }
   if (accountCategory.value === 'oauth-based') {
     extra.openai_oauth_responses_websockets_v2_mode = openaiOAuthResponsesWebSocketV2Mode.value
     extra.openai_oauth_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiOAuthResponsesWebSocketV2Mode.value)

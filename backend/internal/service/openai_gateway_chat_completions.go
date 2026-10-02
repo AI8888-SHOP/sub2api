@@ -70,7 +70,10 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	promptCacheKey string,
 	defaultMappedModel string,
 	compatPromptCacheTenantIsolated bool,
-) (*OpenAIForwardResult, error) {
+) (prismResult *OpenAIForwardResult, returnErr error) {
+	if account.IsPrismCodexEnabled() {
+		defer func() { returnErr = finishPrismCodexForward(c, returnErr) }()
+	}
 	latest, admissionErr := s.admitOpenAITurn(
 		context.WithoutCancel(ctx),
 		c,
@@ -84,6 +87,10 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		return nil, admissionErr
 	}
 	account = latest
+	c.Writer.Header().Del(prismCodexProtocolHeader)
+	if err := rejectUnsupportedPrismCodexEndpoint(c, account); err != nil {
+		return nil, err
+	}
 	rememberOpenCodeInboundBody(c, body)
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
@@ -308,7 +315,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	}
 	logger.L().Debug("openai chat_completions: model mapping applied", logFields...)
 
-	if account.UsesOpenAICodexProtocol() {
+	if account.UsesOpenAICodexProtocol() && !account.IsPrismCodexEnabled() {
 		var reqBody map[string]any
 		if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
 			return nil, fmt.Errorf("unmarshal for codex transform: %w", err)
@@ -375,6 +382,21 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		return nil, policyErr
 	}
 	responsesBody = updatedBody
+	if account.IsPrismCodexEnabled() {
+		// Chat compatibility uses the same continuation transport as Responses.
+		if prev := gjson.GetBytes(body, "previous_response_id"); prev.Exists() {
+			responsesBody, err = sjson.SetRawBytes(responsesBody, "previous_response_id", []byte(prev.Raw))
+			if err != nil {
+				return nil, err
+			}
+		}
+		responsesBody, err = normalizePrismCodexBody(responsesBody, false)
+		if err != nil {
+			MarkResponseCommitted(c)
+			writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return nil, err
+		}
+	}
 	responsesReq.ServiceTier = normalizedOpenAIServiceTierValue(gjson.GetBytes(responsesBody, "service_tier").String())
 
 	// 5. Get access token

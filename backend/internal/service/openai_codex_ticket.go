@@ -730,6 +730,9 @@ func (s *OpenAIGatewayService) harvestPinsCodexIdentity(ctx context.Context, acc
 // 请求路径只注入已捕获的有效门票，不现场打票；无票则返回
 // ErrOpenAICodexTicketUnavailable。打票由后台 harvester 完成。
 func (s *OpenAIGatewayService) applyOpenAICodexTicket(ctx context.Context, account *Account, model string, h http.Header, transport ...string) error {
+	if account.IsPrismCodexEnabled() {
+		return nil
+	}
 	if s == nil || h == nil || !isOpenAICodexTicketAccount(account, model) || !s.openAICodexTicketEnabledContext(ctx) {
 		return nil
 	}
@@ -933,6 +936,9 @@ func (s *OpenAIGatewayService) markManualHarvestLiveModels(account *Account, mod
 }
 
 func (s *OpenAIGatewayService) accountHasLiveCodexTicket(account *Account) bool {
+	if account.IsPrismCodexEnabled() {
+		return false
+	}
 	if s == nil || account == nil {
 		return false
 	}
@@ -1389,6 +1395,9 @@ func IsMaskedProxyURL(raw string) bool {
 // Credential shadows do not own tickets. Keep their existing forwarding policy
 // instead of imposing a gate for a key the harvester never populates.
 func isOpenAICodexTicketAccount(account *Account, upstreamModels ...string) bool {
+	if account.IsPrismCodexEnabled() {
+		return false
+	}
 	if account == nil || !account.IsOpenAIOAuthLike() || account.IsShadow() || account.isExcelBPSAllModelsEnabled() {
 		return false
 	}

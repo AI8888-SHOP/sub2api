@@ -1,5 +1,7 @@
 <template>
   <div class="flex flex-col items-start gap-1">
+    <span v-if="isPrismCodexEnabled" data-testid="prism-codex-status-badge"
+      class="badge text-xs badge-info" :title="t('admin.accounts.openai.prismCodexDesc')">Prism / Codex</span>
     <span
       v-if="isExcelBPSEnabled"
       data-testid="bps-status-badge"
@@ -190,7 +192,15 @@ const emit = defineEmits<{
 }>()
 
 // Keep eligibility aligned with Account.IsExcelBPSEnabled on the backend.
+const isPrismCodexEnabled = computed(() => {
+  const a = props.account
+  const modes = [a.credentials?.auth_mode, a.credentials?.openai_auth_mode].map(value => String(value ?? '').trim().toLowerCase())
+  return a.platform === 'openai' && a.type === 'oauth' && a.parent_account_id == null &&
+    a.extra?.openai_prism_codex === true &&
+    !modes.some(mode => ['agentidentity', 'personalaccesstoken', 'personal_access_token'].includes(mode))
+})
 const isExcelBPSEnabled = computed(() => {
+  if (isPrismCodexEnabled.value) return false
   const account = props.account
   if (account.platform !== 'openai' || account.type !== 'oauth' || account.parent_account_id != null ||
       account.extra?.openai_excel_bps !== true) return false

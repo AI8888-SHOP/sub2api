@@ -452,6 +452,43 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.unrelated).toBe('preserve')
   })
 
+  it('saves and restores Prism with existing credentials and excludes BPS', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.credentials = { access_token: 'test-token', chatgpt_account_id: 'test-account' }
+    account.extra = { unrelated: 'preserve', openai_excel_bps: true }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="prism-codex-toggle"]').setValue(true)
+    expect(wrapper.get('[data-testid="excel-bps-toggle"]').attributes('aria-checked')).toBe('false')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    const payload = updateAccountMock.mock.calls[0]?.[1]
+    expect(payload.extra.openai_prism_codex).toBe(true)
+    expect(payload.extra.openai_excel_bps).not.toBe(true)
+    expect(payload.extra.unrelated).toBe('preserve')
+    const restored = mountModal({ ...account, extra: payload.extra })
+    expect(restored.get<HTMLInputElement>('[data-testid="prism-codex-toggle"]').element.checked).toBe(true)
+    await restored.get('[data-testid="excel-bps-toggle"]').trigger('click')
+    await flushPromises()
+    expect(restored.get<HTMLInputElement>('[data-testid="prism-codex-toggle"]').element.checked).toBe(false)
+  })
+
+  it('cancels pending BPS defaults when Prism is selected', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    let resolveDefaults!: (value: Awaited<ReturnType<typeof getAutoConfig>>) => void
+    vi.mocked(getAutoConfig).mockReturnValueOnce(new Promise(resolve => { resolveDefaults = resolve }))
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="excel-bps-defaults-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="prism-codex-toggle"]').setValue(true)
+    resolveDefaults({ excel_bps: defaultExcelBPSDefaults() } as Awaited<ReturnType<typeof getAutoConfig>>)
+    await flushPromises()
+    expect(wrapper.get<HTMLInputElement>('[data-testid="prism-codex-toggle"]').element.checked).toBe(true)
+    expect(wrapper.get('[data-testid="excel-bps-toggle"]').attributes('aria-checked')).toBe('false')
+  })
+
   it('saves and restores the Google Sheets BPS protocol selection', async () => {
     const account = buildAccount()
     account.type = 'oauth'

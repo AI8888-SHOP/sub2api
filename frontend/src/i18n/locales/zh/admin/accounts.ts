@@ -767,6 +767,10 @@ export default {
       },
       // OpenAI specific hints
       openai: {
+        prismCodex: 'Prism / Codex 兼容模式',
+        prismCodexApply: '批量修改 Prism / Codex 模式',
+        prismCodexDesc: '复用当前 ChatGPT OAuth 凭据，使用 Prism 风格的 Codex 请求和传输。与 Excel / Google Sheets BPS 互斥；不是旧版 Prism Web Agent，不需要 Cookie、projectId 或额外服务。',
+        prismCodexScope: '支持 HTTP Responses / Chat Completions、SSE、工具调用及图片输入；带 previous_response_id 时内部使用 WebSocket。不支持客户端 WebSocket 接入、独立 Images API、compact 或 input_tokens。上游失败不会切回 BPS；自动 BPS 规则在此模式下不生效。',
         baseUrlHint: '留空使用官方 OpenAI API',
         apiKeyHint: '您的 OpenAI API Key',
         oauthPassthrough: '自动透传（仅替换认证）',

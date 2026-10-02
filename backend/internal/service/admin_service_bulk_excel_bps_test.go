@@ -89,6 +89,9 @@ func TestAdminServiceBulkUpdateAccounts_ExcelBPSSettings(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.want["openai_excel_bps"] == true {
+				tt.want[PrismCodexEnabledKey] = false
+			}
 			repo := &accountRepoStubForBulkUpdate{getByIDsAccounts: []*Account{
 				{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth},
 				{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeOAuth},

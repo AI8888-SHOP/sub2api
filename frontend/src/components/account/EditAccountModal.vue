@@ -1801,6 +1801,7 @@
         <p class="input-hint">{{ t('admin.accounts.openai.copilotSDKDesc') }}</p>
       </div>
 
+      <PrismCodexSettings v-if="autoBPSSupported" v-model="prismCodexEnabled" />
       <div v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
         class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="flex items-center justify-between gap-4">
@@ -1945,7 +1946,7 @@
         </div>
       </div>
 
-      <AccountAutoBPSSection v-if="autoBPSSupported" v-model:draft="autoBPS.draft.value" :groups="groups"
+      <AccountAutoBPSSection v-if="autoBPSSupported && !prismCodexEnabled" v-model:draft="autoBPS.draft.value" :groups="groups"
         :loading="autoBPS.loading.value" :load-error="autoBPS.loadError.value" :has-rule="!!autoBPS.rule.value"
         :conflicting-rule-id="autoBPS.conflictingRule.value?.id" />
 
@@ -3289,6 +3290,8 @@ import { DEFAULT_ACCOUNT_COST_MULTIPLIER, isValidAccountCostMultiplier, readAcco
 import { ref, reactive, computed, watch, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ExcelBPSModeSwitches from './ExcelBPSModeSwitches.vue'
+import PrismCodexSettings from './PrismCodexSettings.vue'
+import { usePrismCodexMode } from '@/composables/usePrismCodexMode'
 import { normalizeExcelBPSProtocol, type ExcelBPSMode, type ExcelBPSProtocol } from '@/utils/excelBPSDefaults'
 import { useExcelBPSDefaults } from '@/composables/useExcelBPSDefaults'
 import { DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES, MAX_BPS_RECOVERY_INTERVAL_MINUTES, isValidBPSRecoveryInterval, bpsRecoveryIntervalOrDefault } from '@/utils/excelBPSRecovery'
@@ -3914,6 +3917,7 @@ const customBaseUrl = ref('')
 
 // OpenAI 自动透传开关（OAuth/API Key）
 const excelBPSEnabled = ref(false)
+const prismCodexEnabled = usePrismCodexMode(excelBPSEnabled)
 const excelBPSMode = ref<ExcelBPSMode>('initial')
 const excelBPSProtocol = ref<ExcelBPSProtocol>('excel')
 const excelBPSProtocolOptions = computed(() => [
@@ -3938,7 +3942,7 @@ const bpsDefaults = useExcelBPSDefaults({
   enabled: excelBPSEnabled,
   mode: excelBPSMode,
   available: () => !authStore.isObserver,
-  context: () => JSON.stringify([props.show, props.account?.id, authStore.user?.id, authStore.isObserver]),
+  context: () => JSON.stringify([props.show, props.account?.id, authStore.user?.id, authStore.isObserver, prismCodexEnabled.value]),
   fields: {
     all_models: excelBPSAllModels, models: excelBPSModels,
     omit_unsupported_tools: excelBPSOmitUnsupportedTools, ignore_images: excelBPSIgnoreImages,
@@ -4460,6 +4464,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     upstreamBillingAutoProbeEnabled.value && extra?.upstream_billing_rate_sync_enabled === true
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/SetupToken/API Key)
+  prismCodexEnabled.value = false
   excelBPSEnabled.value = false
   excelBPSMode.value = 'initial'
   excelBPSProtocol.value = 'excel'
@@ -4496,7 +4501,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'setup-token' || newAccount.type === 'apikey')) {
-    excelBPSEnabled.value = newAccount.type === 'oauth' && extra?.openai_excel_bps === true
+    prismCodexEnabled.value = autoBPSSupported.value && extra?.openai_prism_codex === true
+    excelBPSEnabled.value = !prismCodexEnabled.value && newAccount.type === 'oauth' && extra?.openai_excel_bps === true
     excelBPSMode.value = extra?.openai_excel_bps_config_mode === 'defaults' ? 'defaults' : 'initial'
     excelBPSProtocol.value = normalizeExcelBPSProtocol(extra?.openai_excel_bps_protocol)
     excelBPSAllModels.value = excelBPSEnabled.value && !Object.prototype.hasOwnProperty.call(extra ?? {}, 'openai_excel_bps_models')
@@ -5455,7 +5461,7 @@ const submitUpdateAccount = async (accountID: number, updatePayload: Record<stri
     let updatedAccount = await adminAPI.accounts.update(accountID, withAntigravityConfirmFlag(updatePayload))
     updatedAccount = await persistGrokMediaEligibility(accountID, updatedAccount)
     appStore.showSuccess(t('admin.accounts.accountUpdated'))
-    if (autoBPSSupported.value) await saveAutoBPSRule(accountID)
+    if (autoBPSSupported.value && !prismCodexEnabled.value) await saveAutoBPSRule(accountID)
     emit('updated', updatedAccount)
     handleClose()
   } catch (error: any) {
@@ -5491,7 +5497,7 @@ const handleSubmit = async () => {
       return
     }
   }
-  const autoBPSError = autoBPSSupported.value ? autoBPS.validate() : ''
+  const autoBPSError = autoBPSSupported.value && !prismCodexEnabled.value ? autoBPS.validate() : ''
   if (autoBPSError) {
     appStore.showError(t(autoBPSError))
     return
@@ -6024,6 +6030,7 @@ const handleSubmit = async () => {
     if (props.account.platform === 'openai' && (props.account.type === 'oauth' || props.account.type === 'setup-token' || props.account.type === 'apikey')) {
       const currentExtra = (props.account.extra as Record<string, unknown>) || {}
       const newExtra: Record<string, unknown> = { ...currentExtra }
+      if (autoBPSSupported.value) newExtra.openai_prism_codex = prismCodexEnabled.value
       if (props.account.type === 'oauth') {
         applyAccountRPMSettings(newExtra, {
           enabled: rpmLimitEnabled.value,
@@ -6079,7 +6086,7 @@ const handleSubmit = async () => {
       }
       // Preserve hidden routing options when editing a 403-disabled account.
       const preserveDisabledBPS = props.account.type === 'oauth' && !isSparkShadow.value &&
-        !excelBPSEnabled.value && excelBPS403RecoveryPending.value
+        !prismCodexEnabled.value && !excelBPSEnabled.value && excelBPS403RecoveryPending.value
       if (preserveDisabledBPS) {
         for (const key of ['openai_excel_bps_config_mode', 'openai_excel_bps_protocol', 'openai_excel_bps_models', 'openai_excel_bps_mihomo', 'openai_excel_bps_proxy_source',
           'openai_excel_bps_cache_creation_as_input', 'openai_excel_bps_omit_unsupported_tools',

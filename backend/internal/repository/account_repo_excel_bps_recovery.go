@@ -19,6 +19,7 @@ WHERE id = $1 AND deleted_at IS NULL AND parent_account_id IS NULL
  AND (auto_pause_on_expired = false OR expires_at IS NULL OR expires_at > NOW())
  AND credentials = $2::jsonb AND COALESCE(proxy_id, 0) = $4
  AND COALESCE(extra -> 'openai_excel_bps', 'false'::jsonb) <> 'true'::jsonb
+ AND COALESCE(extra -> 'openai_prism_codex', 'false'::jsonb) <> 'true'::jsonb
  AND extra -> 'openai_excel_bps_auto_disable_on_403' = 'true'::jsonb
  AND extra -> 'openai_excel_bps_auto_recover_on_403' = 'true'::jsonb
  AND jsonb_typeof(extra -> 'openai_excel_bps_403_disabled_at') = 'string'

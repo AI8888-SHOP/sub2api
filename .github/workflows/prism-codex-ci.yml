@@ -1,0 +1,57 @@
+name: Prism Codex compatibility
+
+on:
+  push:
+    branches: [feat/prism-codex-protocol]
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - '.github/workflows/prism-codex-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prism-codex-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Protocol and routing regressions
+        working-directory: backend
+        run: go test -tags=unit ./internal/service -run 'PrismCodex|AdminServiceBulkUpdateAccounts_.*(ExcelBPS|Prism)|OpenAITurnAdmission|ProxyRuntimeFallback' -count=1 -timeout=10m
+      - name: Protocol lifecycle race checks
+        working-directory: backend
+        run: go test -race -tags=unit ./internal/service -run PrismCodex -count=1 -timeout=10m
+      - name: Build server
+        working-directory: backend
+        run: go build -o /tmp/sub2api-prism ./cmd/server
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - name: Account protocol UI tests
+        working-directory: frontend
+        run: pnpm exec vitest run src/composables/__tests__/usePrismCodexMode.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts src/components/account/__tests__/BulkEditAccountModal.spec.ts src/components/account/__tests__/CreateAccountModal.autoBPS.spec.ts src/components/account/__tests__/AccountStatusIndicator.spec.ts src/i18n/__tests__/localeKeyCompleteness.spec.ts
+      - name: Typecheck and build
+        working-directory: frontend
+        run: pnpm run build
