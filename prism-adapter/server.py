@@ -103,6 +103,45 @@ def prism_session_is_authenticated(page):
     return isinstance(result, dict) and result.get("status") == 200 and result.get("authenticated") is True
 
 
+def wait_for_prism_session(page, context, timeout=60000):
+    """Wait for Prism's asynchronous OAuth-to-browser session exchange.
+
+    The Prism page starts exchanging ``prism_oai_access_token`` after the
+    initial document has loaded.  Checking the cookie immediately after
+    ``domcontentloaded`` races that exchange and incorrectly reports an
+    authenticated OAuth account as anonymous.  Poll both the cookie jar and
+    the session endpoint so this remains correct when the exchange is slower
+    than usual or when the page's JavaScript bundle changes its timing.
+    """
+    # Let the Prism bootstrap finish before probing /auth/session.  Probing
+    # too early can make the frontend create an anonymous session, which then
+    # masks the OAuth exchange that is still in flight.
+    try:
+        page.wait_for_load_state("networkidle", timeout=timeout)
+    except Exception:
+        # Some browser/network configurations keep a long-lived request open;
+        # the bounded cookie/session polling below remains the fallback.
+        pass
+    # The OAuth exchange can finish just after networkidle.  Give its
+    # response/cookie handler a short grace period before the first explicit
+    # session probe; an early probe may lock in an anonymous session.
+    page.wait_for_timeout(1500)
+    deadline = time.monotonic() + timeout / 1000
+    while time.monotonic() < deadline:
+        session_cookie = next((item for item in context.cookies([BASE])
+                               if item.get("name") == "prism_session_token"), None)
+        if session_cookie:
+            try:
+                if prism_session_is_authenticated(page):
+                    return session_cookie
+            except Exception:
+                # The page may still be bootstrapping or briefly navigating;
+                # retry until the bounded deadline.
+                pass
+        page.wait_for_timeout(500)
+    return None
+
+
 def parse_prompt(payload):
     if not isinstance(payload, dict) or payload.get("model") != MODEL:
         raise AdapterError(422, "unsupported_model", "This Prism account currently supports gpt-5.6-sol only")
@@ -342,19 +381,13 @@ class BrowserTurn:
                 page.route("**/api/llm/response_with_tools_*", gate_start)
                 # A new chat does not clear files in a Prism project. Every
                 # stateless request gets a blank project, including admin tests.
-                page.goto(BASE, wait_until="domcontentloaded", timeout=60000)
-                session_cookie = next((cookie for cookie in context.cookies([BASE])
-                                       if cookie.get("name") == "prism_session_token"), None)
+                # Wait for the full Prism bootstrap so its OAuth exchange can
+                # run before we probe /auth/session (a DOM-only wait races it).
+                page.goto(BASE, wait_until="networkidle", timeout=60000)
+                session_cookie = wait_for_prism_session(page, context)
                 if not session_cookie:
                     raise AdapterError(401, "prism_auth_required",
                                        "Prism did not establish a browser session for this OAuth account")
-                try:
-                    authenticated = prism_session_is_authenticated(page)
-                except Exception:
-                    authenticated = False
-                if not authenticated:
-                    raise AdapterError(401, "prism_auth_required",
-                                       "Prism browser session is anonymous; valid Prism/OpenAI login is required")
                 page.get_by_role("button", name="New", exact=True).click(timeout=60000)
                 page.get_by_role("menuitem", name="Blank project").click(timeout=60000)
                 page.wait_for_function("new URL(location.href).searchParams.has('u')", timeout=60000)
@@ -473,7 +506,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def setup(self):
         super().setup()
-        self.connection.settimeout(30)
+        # A browser-backed Prism turn can spend up to 60 seconds establishing
+        # its session and up to 240 seconds polling the terminal result.  A
+        # shorter socket timeout makes the client see RemoteDisconnected while
+        # Playwright is still working.
+        self.connection.settimeout(300)
 
     def log_message(self, *_args):
         pass
