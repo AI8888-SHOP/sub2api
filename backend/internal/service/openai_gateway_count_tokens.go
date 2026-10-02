@@ -57,6 +57,18 @@ func (s *OpenAIGatewayService) ForwardResponsesInputTokens(
 		writeOpenAIResponsesInputTokensError(c, http.StatusServiceUnavailable, "api_error", "No available OpenAI accounts")
 		return fmt.Errorf("responses input_tokens: missing account")
 	}
+	// Prism does not expose /responses/input_tokens. Preserve the OpenAI
+	// response shape with the same local estimator used for custom relays,
+	// without probing an endpoint that the Prism server cannot serve.
+	if account.IsPrismCodexEnabled() {
+		prepared, err := prepareNativeOpenAIInputTokensCountRequest(body, account)
+		if err != nil {
+			writeOpenAIResponsesInputTokensError(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+			return err
+		}
+		writeOpenAIResponsesInputTokensFallback(c, account, prepared, http.StatusNotFound, "prism_compatibility")
+		return nil
+	}
 
 	prepared, err := prepareNativeOpenAIInputTokensCountRequest(body, account)
 	if err != nil {

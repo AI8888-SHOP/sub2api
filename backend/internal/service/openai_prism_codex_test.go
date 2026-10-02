@@ -218,6 +218,27 @@ func TestPrismCodexHTTPProfileAndFullForward(t *testing.T) {
 	}
 }
 
+func TestPrismCodexCompactUsesResponsesCompatibilityBridge(t *testing.T) {
+	a := prismTestAccount()
+	u := &prismHTTPRecorder{}
+	s := &OpenAIGatewayService{httpUpstream: u, accountRepo: &turnAdmissionRepo{account: a}, cfg: &config.Config{RunMode: config.RunModeSimple}}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", nil)
+	body := []byte(`{"model":"gpt-6-astra","input":"compact me","stream":false,"store":true,"prompt_cache_key":"must-drop","metadata":{"must":"drop"}}`)
+
+	result, err := s.Forward(context.Background(), c, a, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 1, u.calls)
+	require.Equal(t, chatgptCodexURL, u.req.URL.String())
+	require.True(t, gjson.GetBytes(u.body, "stream").Bool())
+	require.False(t, gjson.GetBytes(u.body, "prompt_cache_key").Exists())
+	require.False(t, gjson.GetBytes(u.body, "metadata").Exists())
+	require.False(t, gjson.GetBytes(u.body, "store").Bool())
+	require.Contains(t, rec.Body.String(), "pong")
+}
+
 type prismWSConn struct {
 	frames   [][]byte
 	frame    []byte
@@ -358,7 +379,7 @@ func TestPrismCodexWebSocketCancellationAndNoReplay(t *testing.T) {
 }
 
 func TestPrismCodexUnsupportedEndpointsAndNoMixedErrors(t *testing.T) {
-	for _, path := range []string{"/v1/images/generations", "/v1/images/edits", "/v1/responses/compact", "/v1/responses/input_tokens"} {
+	for _, path := range []string{"/v1/embeddings", "/v1/videos/generations", "/v1/messages"} {
 		r := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(r)
 		c.Request = httptest.NewRequest("POST", path, nil)
@@ -369,6 +390,13 @@ func TestPrismCodexUnsupportedEndpointsAndNoMixedErrors(t *testing.T) {
 		require.Equal(t, 400, r.Code)
 		require.True(t, json.Valid(r.Body.Bytes()))
 		require.True(t, IsResponseCommitted(c))
+	}
+	for _, path := range []string{"/v1/images/generations", "/v1/images/edits", "/v1/responses/compact", "/v1/responses/input_tokens"} {
+		r := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(r)
+		c.Request = httptest.NewRequest("POST", path, nil)
+		require.NoError(t, rejectUnsupportedPrismCodexEndpoint(c, prismTestAccount()), path)
+		require.False(t, IsResponseCommitted(c), path)
 	}
 	for _, status := range []int{403, 429} {
 		s := &OpenAIGatewayService{openaiWSPassthroughDialer: turnAdmissionDialerFunc(func(context.Context, string, http.Header, string) (openAIWSClientConn, int, http.Header, error) {
@@ -395,14 +423,17 @@ func TestPrismCodexProbeAndModelsUseProfile(t *testing.T) {
 	require.Equal(t, 1, u.calls)
 	require.Equal(t, prismCodexUserAgent, u.req.Header.Get("User-Agent"))
 	require.Contains(t, rec.Body.String(), `"test_complete"`)
-	for _, probe := range []struct{ model, mode string }{{"gpt-image-1", ""}, {"gpt-6-astra", AccountTestModeCompact}} {
-		rec := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(rec)
-		c.Request = httptest.NewRequest("POST", "/api/v1/admin/accounts/41/test", nil)
-		require.Error(t, s.testOpenAIAccountConnection(c, a, probe.model, "ping", probe.mode))
-		require.Contains(t, rec.Body.String(), "unsupported")
-		require.Equal(t, 1, u.calls)
-	}
+	// Prism account probes use the same Responses compatibility paths as user
+	// traffic; they must no longer be rejected as unsupported media/compact
+	// probes before the request reaches the protocol profile.
+	rec = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest("POST", "/v1/images/generations", nil)
+	require.NoError(t, rejectUnsupportedPrismCodexEndpoint(c, a))
+	rec = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest("POST", "/v1/responses/compact", nil)
+	require.NoError(t, rejectUnsupportedPrismCodexEndpoint(c, a))
 	req, err := s.buildOpenAIOAuthUpstreamModelsRequest(context.Background(), a)
 	require.NoError(t, err)
 	require.Equal(t, "/backend-api/codex/models", req.URL.Path)

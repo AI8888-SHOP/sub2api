@@ -251,7 +251,9 @@ func prepareOpenAIWSHTTPBridgeBody(account *Account, payload []byte) ([]byte, er
 	}
 	delete(body, "type")
 	delete(body, "generate")
-	delete(body, "previous_response_id")
+	if account == nil || !account.IsPrismCodexEnabled() {
+		delete(body, "previous_response_id")
+	}
 	deleteOpenAIResponsesNoneReasoningEffortFromObject(account, body)
 	body["stream"] = true
 	return json.Marshal(body)
@@ -616,6 +618,12 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			upstreamMsg = http.StatusText(resp.StatusCode)
 		}
 		shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody)
+		if account.IsPrismCodexEnabled() {
+			// Prism is an authoritative protocol selection. Never surface a
+			// scheduler failover error that could move this request to BPS or a
+			// different account/protocol.
+			shouldFailover = false
+		}
 		if account.Platform == PlatformGrok {
 			shouldFailover = s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody)
 			s.handleGrokAccountUpstreamError(withGrokTeamRateLimitModel(ctx, resolveGrokWSUpstreamModel(account, body, originalModel)), account, resp.StatusCode, resp.Header, respBody)
@@ -834,9 +842,15 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			}
 			statusCode := openAIStreamFailureStatus(upstreamMessage, errMessage)
 			shouldFailover := openAIStreamFailedEventShouldFailover(upstreamMessage, errMessage)
+			if account.IsPrismCodexEnabled() {
+				shouldFailover = false
+			}
 			if eventType == "error" {
 				errCodeRaw, errTypeRaw, _ := parseOpenAIWSErrorEventFields(upstreamMessage)
 				shouldFailover = openAIStreamErrorEventShouldFailover(upstreamMessage, errMessage)
+				if account.IsPrismCodexEnabled() {
+					shouldFailover = false
+				}
 				if account.Platform == PlatformGrok {
 					statusCode = openAIWSErrorHTTPStatusFromRaw(errCodeRaw, errTypeRaw)
 				}

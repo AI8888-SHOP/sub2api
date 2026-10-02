@@ -604,7 +604,10 @@ func (s *OpenAIGatewayService) ForwardImages(
 	body []byte,
 	parsed *OpenAIImagesRequest,
 	channelMappedModel string,
-) (*OpenAIForwardResult, error) {
+) (result *OpenAIForwardResult, returnErr error) {
+	if account != nil && account.IsPrismCodexEnabled() {
+		defer func() { returnErr = finishPrismCodexForward(c, returnErr) }()
+	}
 	if parsed == nil {
 		return nil, fmt.Errorf("parsed images request is required")
 	}

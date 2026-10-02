@@ -221,6 +221,30 @@ func prismCodexHeaders(token, accountID, turnState string) http.Header {
 // Reuse the core raw Responses/SSE response path without running the native
 // Codex CLI transforms (which may drop continuation IDs or rewrite tools).
 func (s *OpenAIGatewayService) forwardPrismCodex(ctx context.Context, c *gin.Context, account *Account, body []byte, start time.Time) (*OpenAIForwardResult, error) {
+	// Prism's upstream only serves the standard Codex Responses route. The
+	// legacy /responses/compact ingress is therefore lowered to the same
+	// Responses body before Prism normalization, instead of being sent as a
+	// nonexistent upstream sub-route or carrying compact-only fields through.
+	if isOpenAIResponsesCompactPath(c) {
+		normalizedCompact, changed, compactErr := normalizeOpenAICompactRequestBody(body)
+		if compactErr != nil {
+			MarkResponseCommitted(c)
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": compactErr.Error()}})
+			return nil, compactErr
+		}
+		if changed {
+			body = normalizedCompact
+		}
+		// Prism only exposes the standard Codex Responses route.  Lower the
+		// legacy compact ingress to the native remote-compaction signal instead
+		// of silently forwarding an ordinary Responses turn.
+		body, compactErr = ensurePrismCodexCompactionTrigger(body)
+		if compactErr != nil {
+			MarkResponseCommitted(c)
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": compactErr.Error()}})
+			return nil, compactErr
+		}
+	}
 	view := newOpenAIRequestView(body)
 	_, model := resolveOpenAIForwardMappedModels(account, view.Model, false)
 	normalized, err := normalizePrismCodexBody(ReplaceModelInBody(body, model), false)
@@ -232,6 +256,34 @@ func (s *OpenAIGatewayService) forwardPrismCodex(ctx context.Context, c *gin.Con
 	SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)
 	return s.forwardOpenAIPassthrough(ctx, c, account, normalized, body, view.Model, false,
 		extractOpenAIReasoningEffortFromBody(normalized, model), view.Stream, start)
+}
+
+func ensurePrismCodexCompactionTrigger(body []byte) ([]byte, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
+		return nil, errors.New("Prism/Codex compact request requires a JSON object")
+	}
+	rawInput := fields["input"]
+	var items []json.RawMessage
+	if len(rawInput) > 0 && string(rawInput) != "null" {
+		if err := json.Unmarshal(rawInput, &items); err != nil {
+			var text string
+			if json.Unmarshal(rawInput, &text) != nil {
+				return nil, errors.New("Prism/Codex compact input must be a string or an array")
+			}
+			message, _ := json.Marshal(map[string]any{"type": "message", "role": "user", "content": text})
+			items = []json.RawMessage{message}
+		}
+	}
+	for _, item := range items {
+		if gjson.GetBytes(item, "type").String() == "compaction_trigger" {
+			fields["input"], _ = json.Marshal(items)
+			return json.Marshal(fields)
+		}
+	}
+	items = append(items, json.RawMessage(`{"type":"compaction_trigger"}`))
+	fields["input"], _ = json.Marshal(items)
+	return json.Marshal(fields)
 }
 
 // Fail closed: a Prism attempt must not turn a transport/SSE error into an
@@ -263,9 +315,9 @@ func (e *prismCodexRequestSentError) Error() string {
 func (e *prismCodexRequestSentError) Unwrap() error { return e.cause }
 
 func (s *OpenAIGatewayService) buildPrismCodexRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string) (*http.Request, error) {
-	if suffix := openAIResponsesRequestPathSuffix(c); suffix != "" {
-		return nil, errors.New("Prism/Codex does not support Responses sub-endpoints")
-	}
+	// Prism currently exposes only the Codex Responses endpoint upstream. The
+	// gateway's compact and image routes are compatibility surfaces that are
+	// lowered to that same endpoint before this request is sent.
 	normalized, err := normalizePrismCodexBody(body, false)
 	if err != nil {
 		return nil, err
@@ -441,10 +493,14 @@ func rejectUnsupportedPrismCodexEndpoint(c *gin.Context, account *Account) error
 	if c != nil && c.Request != nil && c.Request.URL != nil {
 		path = c.Request.URL.Path
 	}
-	if strings.HasSuffix(path, "/responses") || strings.HasSuffix(path, "/chat/completions") {
+	if strings.HasSuffix(path, "/responses") || strings.HasSuffix(path, "/chat/completions") ||
+		isOpenAIResponsesCompactPath(c) ||
+		IsOpenAIResponsesInputTokensRequestPath(c) ||
+		strings.HasSuffix(path, "/images/generations") ||
+		strings.HasSuffix(path, "/images/edits") {
 		return nil
 	}
-	err := errors.New("Prism/Codex supports Responses and Chat Completions, not this endpoint; use image inputs or tools within Responses")
+	err := errors.New("Prism/Codex does not support this endpoint")
 	MarkResponseCommitted(c)
 	c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "code": "prism_codex_endpoint_unsupported", "message": err.Error()}})
 	return err

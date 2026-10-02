@@ -57,7 +57,7 @@
 - **Codex ticket 管理**：提供后台采集、注入、模型选择及账号状态展示；相关开关和采集代理由管理员配置。
 - **Mihomo 出口管理**：集成采集出口管理、票据刷新策略和节点状态操作，日常业务代理与采集出口分别配置。
 - **Excel / Basispoints**：维护模型级 BPS 路由、内嵌图片 HTTPS 中转、磁盘和并发保护、结构化输出校验，以及工具历史和 transport 恢复。开启 BPS 且账号未因 403 自动关闭时，请求强制走 BPS；不支持的能力会由 BPS 返回错误，不再静默回退原 Codex 通道。
-- **Prism / Codex 兼容模式**：普通 OAuth 账号可复用已有凭据，选择 Prism 风格的 Codex HTTP/SSE 与会话续接 WebSocket 传输；与 Excel / Google Sheets BPS 互斥，支持工具调用和图片输入，不需要 Cookie 或额外服务。不是旧 Prism Web Agent；支持范围及限制见 [Prism / Codex 配置说明](docs/prism-codex.md)。
+- **Prism / Codex 兼容模式**：普通 OAuth 账号可复用已有凭据，选择 Prism 风格的 Codex HTTP/SSE 与会话续接 WebSocket 传输；与 Excel / Google Sheets BPS 互斥，支持工具调用、图片输入、独立图片接口兼容转换、compact 兼容和本地 input token 估算，不需要 Cookie 或额外服务。不是旧 Prism Web Agent；支持范围及限制见 [Prism / Codex 配置说明](docs/prism-codex.md)。
 - **上游修复维护**：持续跟踪上游 Codex、Responses、工具调用、密文恢复和限流修复；先确认与本 fork 的行为差异，再按提交级别移植并补充回归测试。
 - **独立发布与升级**：使用 `AI8888-SHOP/sub2api` 的 Release、安装资源和容器镜像。版本变更见 [更新说明](https://github.com/AI8888-SHOP/sub2api/releases)；Release 成功不代表生产服务已经部署，线上状态需要单独验证。
 

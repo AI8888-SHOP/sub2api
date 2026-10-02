@@ -1803,7 +1803,10 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 	if err := validateOpenAIImagesModel(upstreamModel); err != nil {
 		return nil, err
 	}
-	direct := usesCodexDirectImages(upstreamModel) && !isOpenAIImagesForceResponses(ctx)
+	// Prism has no independent /images endpoint. Always use the existing
+	// Responses image_generation bridge so the request remains on Prism's
+	// Codex profile, including for models that support Codex direct images.
+	direct := usesCodexDirectImages(upstreamModel) && !isOpenAIImagesForceResponses(ctx) && !account.IsPrismCodexEnabled()
 	beginUpstreamResponseModelObservation(c)
 	SetOpsUpstreamModel(c, upstreamModel)
 	logger.LegacyPrintf(
@@ -1844,25 +1847,32 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 	if err != nil {
 		return nil, err
 	}
-	upstreamCtx = withOpenAIImagesSelfBuiltRequest(upstreamCtx)
-	upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, responsesBody, token, true, parsed.StickySessionSeed(), false)
-	if err != nil {
-		return nil, err
-	}
-	// 复用 Codex 认证、影子账号及指纹头；仅切换已构造请求的端点和响应协议。
-	upstreamReq.URL, err = url.Parse(targetURL)
-	if err != nil {
-		return nil, err
-	}
-	upstreamReq.Header.Set("Content-Type", "application/json")
-	upstreamReq.Header.Set("Accept", "text/event-stream")
-	if direct {
-		upstreamReq.Header.Del("OpenAI-Beta")
-		if !parsed.Stream {
-			upstreamReq.Header.Set("Accept", "application/json")
-		}
+	var upstreamReq *http.Request
+	if account.IsPrismCodexEnabled() {
+		SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)
+		upstreamReq, err = s.buildPrismCodexRequest(upstreamCtx, c, account, responsesBody, token)
 	} else {
-		upstreamReq.Header.Set("OpenAI-Beta", "responses=experimental")
+		upstreamCtx = withOpenAIImagesSelfBuiltRequest(upstreamCtx)
+		upstreamReq, err = s.buildUpstreamRequest(upstreamCtx, c, account, responsesBody, token, true, parsed.StickySessionSeed(), false)
+		if err == nil {
+			// 复用 Codex 认证、影子账号及指纹头；仅切换已构造请求的端点和响应协议。
+			upstreamReq.URL, err = url.Parse(targetURL)
+			if err == nil {
+				upstreamReq.Header.Set("Content-Type", "application/json")
+				upstreamReq.Header.Set("Accept", "text/event-stream")
+				if direct {
+					upstreamReq.Header.Del("OpenAI-Beta")
+					if !parsed.Stream {
+						upstreamReq.Header.Set("Accept", "application/json")
+					}
+				} else {
+					upstreamReq.Header.Set("OpenAI-Beta", "responses=experimental")
+				}
+			}
+		}
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	proxyURL := ""
@@ -1870,7 +1880,12 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		proxyURL = account.Proxy.URL()
 	}
 	upstreamStart := time.Now()
-	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+	var resp *http.Response
+	if account.IsPrismCodexEnabled() {
+		resp, err = s.doPrismCodexUpstream(upstreamReq, proxyURL, account)
+	} else {
+		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+	}
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
@@ -1908,7 +1923,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		}
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
-		if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody) {
+		if !account.IsPrismCodexEnabled() && s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody) {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				ProxyID:            opsUpstreamProxyID(account),
 				ProxyName:          opsUpstreamProxyName(account),
@@ -2084,6 +2099,11 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 	err error,
 ) error {
 	responseWritten := c != nil && c.Writer != nil && OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeResponse
+	if account != nil && account.IsPrismCodexEnabled() {
+		// Prism is an explicit protocol choice. Image errors must return through
+		// the Prism fail-closed wrapper instead of producing an account failover.
+		return err
+	}
 	if code, message, ok := OpenAIUpstreamStreamReadErrorDetails(err); ok {
 		// A body transport failure after a successful HTTP status is retryable only
 		// until real image output has reached the client. Keep the upstream headers

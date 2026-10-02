@@ -66,6 +66,33 @@ func TestForwardResponsesInputTokensGrokOAuthUsesLocalEstimate(t *testing.T) {
 	require.Nil(t, upstream.lastReq)
 }
 
+func TestForwardResponsesInputTokensPrismUsesLocalEstimate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/input_tokens", nil)
+
+	upstream := &httpUpstreamRecorder{}
+	svc := &OpenAIGatewayService{httpUpstream: upstream}
+	account := &Account{
+		ID:          161,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{"access_token": "prism-token"},
+		Extra:       map[string]any{PrismCodexEnabledKey: true},
+	}
+	body := []byte(`{"model":"gpt-6-astra","instructions":"Be concise.","input":"hello world"}`)
+
+	err := svc.ForwardResponsesInputTokens(context.Background(), c, account, body)
+
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "response.input_tokens", gjson.Get(recorder.Body.String(), "object").String())
+	require.Positive(t, gjson.Get(recorder.Body.String(), "input_tokens").Int())
+	require.Nil(t, upstream.lastReq, "Prism must not probe its nonexistent /responses/input_tokens route")
+}
+
 func TestForwardResponsesInputTokensUpstream404FallsBackLocally(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

@@ -24,11 +24,12 @@
 | 图片输入 | 保留 URL / data URL，随请求直接交给 Codex；不走 BPS 图片中转 |
 | 加密 reasoning | 保留历史；请求 reasoning 时包含 encrypted_content |
 | 账号连接测试、模型同步 | 使用同一 Prism 身份配置和当前 OAuth 凭据 |
-| 独立 `/images/generations`、`/images/edits` | 明确拒绝，不切换协议 |
-| `/responses/compact`、`/responses/input_tokens` | 明确拒绝 |
-| 客户端 WebSocket 入口 | 不启用；内部续接用的 WebSocket 不等于客户端入口支持 |
+| 独立 `/images/generations`、`/images/edits` | 网关转换为 Responses `image_generation` 工具，仍走 Prism；不是 Prism 上游的独立 Images 路由 |
+| `/responses/compact` | 网关兼容转换到 Prism Responses 流；Prism 上游目前没有独立 compact 路由 |
+| `/responses/input_tokens` | 网关本地估算并返回 OpenAI 兼容响应；不请求 Prism 上游不存在的端点 |
+| 客户端 WebSocket 入口 | 通过现有 HTTP bridge 接入；首轮使用 Prism HTTP/SSE，带 `previous_response_id` 的续接使用 Prism 内部 Codex WebSocket |
 
-上游请求强制 SSE，非流式客户端由网关聚合为 JSON。无历史响应 ID 使用 HTTP；带历史 ID 使用内部 WebSocket，将事件转换成 SSE 交给现有响应处理。传输身份为 `Codex/1.0 (OpenAI; Linux x86_64)`、`Originator: codex_cli_rs`、`responses_websockets=2026-02-06`，并剥离客户端 Cookie 等无关身份字段。`service_tier` 不发送，以实际上游响应计费信息为准。
+上游请求强制 SSE，非流式客户端由网关聚合为 JSON。普通 HTTP 请求无历史响应 ID 使用 HTTP；带历史 ID 使用内部 WebSocket，将事件转换成 SSE 交给现有响应处理。客户端 WebSocket 入口使用同一套 Prism profile，不会进入 BPS、native 或插件通道。传输身份为 `Codex/1.0 (OpenAI; Linux x86_64)`、`Originator: codex_cli_rs`、`responses_websockets=2026-02-06`，并剥离客户端 Cookie 等无关身份字段。`service_tier` 不发送，以实际上游响应计费信息为准。
 
 选中 Prism 的请求失败时不会自动改用 BPS 或另一个协议账号重放。代理层只允许在证明尚未发送请求时，按已有代理设置尝试备用出口；WebSocket 发送过 `response.create` 后禁止出口重放。响应头 `X-Sub2API-Upstream-Protocol: prism_codex` 可辅助排查。
 

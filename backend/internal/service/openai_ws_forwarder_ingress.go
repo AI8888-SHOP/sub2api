@@ -144,11 +144,14 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	}
 
 	wsDecision := s.getOpenAIWSProtocolResolver().Resolve(account)
-	if account.IsPrismCodexEnabled() {
-		return errors.New("Prism/Codex accepts HTTP Responses and Chat Completions, not client WebSocket ingress")
-	}
 	forceHTTPBridge := account.Platform == PlatformGrok ||
 		(s.pluginManager != nil && s.pluginManager.ShouldRouteOpenAIOAuth(account))
+	// Prism has no separate client WS ingress. Reuse the existing HTTP bridge;
+	// its request builder and final upstream dispatcher still select the Prism
+	// profile, and continuation turns can use Prism's internal Codex WS.
+	if account.IsPrismCodexEnabled() {
+		forceHTTPBridge = true
+	}
 	modeRouterV2Enabled := s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIWS.ModeRouterV2Enabled
 	ingressMode := OpenAIWSIngressModeCtxPool
 	if modeRouterV2Enabled && !forceHTTPBridge {
@@ -680,6 +683,12 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			toolOutputCoverage := AnalyzeToolCallOutputContextCoverageBytes(currentBridgePayload.payloadRaw)
 			needsBridgeReplay := currentBridgePayload.previousResponseID != "" ||
 				(toolOutputCoverage.HasFunctionCallOutput && !toolOutputCoverage.ContextCoversAllCallIDs)
+			// Prism/Codex owns continuation state when previous_response_id is
+			// present. Do not replay the whole transcript in that case: retaining
+			// the ID lets doPrismCodexUpstream use its internal upstream WS path.
+			if account.IsPrismCodexEnabled() {
+				needsBridgeReplay = false
+			}
 			// 一次解析当前 input，正常 replay 与 account-failover 两份序列共享同一批正文。
 			bridgeCurrentItems, bridgeCurrentItemsExist, extractErr := openAIWSExtractNormalizedInputSequence(
 				currentBridgePayload.payloadRaw,
