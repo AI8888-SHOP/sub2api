@@ -2427,6 +2427,7 @@ const handleSubmit = async () => {
 
   const hasAnyFieldEnabled =
     enableBaseUrl.value ||
+    (enablePrismCodex.value && allOpenAIOAuthOnly.value) ||
     (enableExcelBPS.value && allOpenAIOAuthOnly.value) ||
     enableOpenAIPassthrough.value ||
     enableOpenAIFlattenNamespaces.value ||

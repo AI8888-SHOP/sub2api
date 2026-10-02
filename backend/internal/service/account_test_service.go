@@ -825,6 +825,12 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	// /responses wire and does NOT apply the legacy compact-only mapping
 	// (post-#5641 semantics: compact_model_mapping is /responses/compact-only).
 	testModelID = account.GetMappedModel(testModelID)
+	if account.IsPrismCodexEnabled() {
+		c.Header(prismCodexProtocolHeader, "prism_codex")
+		if mode == AccountTestModeCompact || isOpenAIImageModel(testModelID) {
+			return s.sendErrorAndEnd(c, "Prism/Codex supports Responses and Chat Completions; standalone Images and compact probes are unsupported")
+		}
+	}
 	if mode == AccountTestModeCompact {
 		return s.testOpenAICompactConnection(c, account, testModelID)
 	}
@@ -860,6 +866,13 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		// Agent Identity signs each request and does not retain the OAuth token.
 		if !credentialAccount.IsOpenAIAgentIdentity() {
 			authToken = credentialAccount.GetOpenAIAccessToken()
+		}
+		if account.IsPrismCodexEnabled() && s.openaiGatewayService != nil {
+			var tokenErr error
+			authToken, _, tokenErr = s.openaiGatewayService.GetAccessToken(ctx, account)
+			if tokenErr != nil {
+				return s.sendErrorAndEnd(c, "Failed to refresh Prism/Codex OAuth token")
+			}
 		}
 		if authToken == "" && !credentialAccount.IsOpenAIAgentIdentity() {
 			return s.sendErrorAndEnd(c, "No access token available")
@@ -959,7 +972,11 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
-	credentialAccount.ApplyHeaderOverrides(req.Header)
+	if account.IsPrismCodexEnabled() {
+		req.Header = prismCodexHeaders(authToken, excelBPSAccountID(credentialAccount, authToken), "")
+	} else {
+		credentialAccount.ApplyHeaderOverrides(req.Header)
+	}
 
 	// Get proxy URL
 	proxyURL := ""

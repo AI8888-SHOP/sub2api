@@ -95,6 +95,55 @@ func TestPrismCodexSettingsAndRouting(t *testing.T) {
 	require.NotEqual(t, before, openAITurnRouteFingerprint(a))
 }
 
+type prismAdminRepo struct {
+	AccountRepository
+	account *Account
+	updates map[string]any
+}
+
+func (r *prismAdminRepo) GetByID(context.Context, int64) (*Account, error) { return r.account, nil }
+func (r *prismAdminRepo) UpdateExtra(_ context.Context, _ int64, updates map[string]any) error {
+	r.updates = updates
+	return nil
+}
+
+func TestPrismCodexAdminNormalization(t *testing.T) {
+	input := &CreateAccountInput{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"access_token": "at"}}
+	a, err := buildAccountForCreate(input, map[string]any{PrismCodexEnabledKey: true})
+	require.NoError(t, err)
+	require.True(t, a.IsPrismCodexEnabled())
+	require.Equal(t, "at", a.GetOpenAIAccessToken())
+	input.Type = AccountTypeAPIKey
+	_, err = buildAccountForCreate(input, map[string]any{PrismCodexEnabledKey: true})
+	require.Error(t, err)
+	for _, enabled := range []bool{false, true} {
+		a := prismTestAccount()
+		a.Extra["openai_excel_bps"] = !enabled
+		r := &prismAdminRepo{account: a}
+		s := &adminServiceImpl{accountRepo: r}
+		update := map[string]any{PrismCodexEnabledKey: true}
+		if !enabled {
+			update = map[string]any{"openai_excel_bps": true}
+		}
+		require.NoError(t, s.UpdateAccountExtra(context.Background(), a.ID, update))
+		require.Equal(t, enabled, r.updates[PrismCodexEnabledKey])
+		require.Equal(t, !enabled, r.updates["openai_excel_bps"])
+	}
+	for _, invalid := range []any{"true", nil, 1} {
+		require.Error(t, normalizePrismCodexExtra(map[string]any{PrismCodexEnabledKey: invalid}))
+	}
+}
+
+func TestAdminServiceBulkUpdateAccounts_Prism(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{getByIDsAccounts: []*Account{prismTestAccount()}}
+	s := &adminServiceImpl{accountRepo: repo}
+	result, err := s.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{AccountIDs: []int64{41}, Extra: map[string]any{PrismCodexEnabledKey: true}})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Success)
+	require.Equal(t, true, repo.lastBulkUpdate.Extra[PrismCodexEnabledKey])
+	require.Equal(t, false, repo.lastBulkUpdate.Extra["openai_excel_bps"])
+}
+
 type prismHTTPRecorder struct {
 	HTTPUpstream
 	req    *http.Request

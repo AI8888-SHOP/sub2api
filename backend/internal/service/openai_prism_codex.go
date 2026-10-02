@@ -85,10 +85,15 @@ func normalizePrismCodexBody(body []byte, websocket bool) ([]byte, error) {
 	if json.Unmarshal(fields["model"], &model) != nil || strings.TrimSpace(model) == "" {
 		return nil, errors.New("Prism/Codex requires a model")
 	}
-	if prev, exists := fields["previous_response_id"]; exists && string(prev) != "null" {
+	if prev, exists := fields["previous_response_id"]; exists {
 		var id string
-		if json.Unmarshal(prev, &id) != nil {
+		if string(prev) != "null" && json.Unmarshal(prev, &id) != nil {
 			return nil, errors.New("previous_response_id must be a string")
+		}
+		if id = strings.TrimSpace(id); id == "" {
+			delete(fields, "previous_response_id")
+		} else {
+			fields["previous_response_id"], _ = json.Marshal(id)
 		}
 	}
 	// These fields are not part of the Prism Codex Responses contract.
@@ -99,6 +104,11 @@ func normalizePrismCodexBody(body []byte, websocket bool) ([]byte, error) {
 	fields["stream"] = json.RawMessage("true")
 	if raw, ok := fields["instructions"]; !ok || string(raw) == "null" {
 		fields["instructions"] = json.RawMessage(`""`)
+	} else {
+		var instructions string
+		if json.Unmarshal(raw, &instructions) != nil {
+			return nil, errors.New("instructions must be a string")
+		}
 	}
 	if raw := fields["input"]; len(raw) == 0 || string(raw) == "null" {
 		fields["input"] = json.RawMessage("[]")
@@ -220,9 +230,8 @@ func (s *OpenAIGatewayService) forwardPrismCodex(ctx context.Context, c *gin.Con
 		return nil, err
 	}
 	SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)
-	result, err := s.forwardOpenAIPassthrough(ctx, c, account, normalized, body, view.Model, false,
+	return s.forwardOpenAIPassthrough(ctx, c, account, normalized, body, view.Model, false,
 		extractOpenAIReasoningEffortFromBody(normalized, model), view.Stream, start)
-	return result, finishPrismCodexForward(c, err)
 }
 
 // Fail closed: a Prism attempt must not turn a transport/SSE error into an
@@ -232,7 +241,12 @@ func finishPrismCodexForward(c *gin.Context, err error) error {
 		return nil
 	}
 	if !c.Writer.Written() && !IsResponseCommitted(c) {
-		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "upstream_error", "code": "prism_codex_upstream_error", "message": "Prism/Codex upstream request failed"}})
+		status := http.StatusBadGateway
+		var failed *UpstreamFailoverError
+		if errors.As(err, &failed) && failed.StatusCode >= 400 && failed.StatusCode <= 599 {
+			status = failed.StatusCode
+		}
+		c.JSON(status, gin.H{"error": gin.H{"type": "upstream_error", "code": "prism_codex_upstream_error", "message": "Prism/Codex upstream request failed"}})
 	}
 	MarkResponseCommitted(c)
 	return fmt.Errorf("Prism/Codex forwarding failed: %s", sanitizeUpstreamErrorMessage(err.Error()))
@@ -381,6 +395,9 @@ func (s *OpenAIGatewayService) doPrismCodexUpstream(req *http.Request, proxyURL 
 		headers = headers.Clone()
 	}
 	headers.Set("Content-Type", "text/event-stream")
+	for _, key := range []string{"Connection", "Upgrade", "Sec-WebSocket-Accept", "Sec-WebSocket-Extensions", "Sec-WebSocket-Protocol", "Content-Length"} {
+		headers.Del(key)
+	}
 	return &http.Response{StatusCode: http.StatusOK, Header: headers, Body: stream, Request: req}, nil
 }
 

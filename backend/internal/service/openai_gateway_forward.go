@@ -21,6 +21,9 @@ import (
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (result *OpenAIForwardResult, resultErr error) {
+	if account.IsPrismCodexEnabled() {
+		defer func() { resultErr = finishPrismCodexForward(c, resultErr) }()
+	}
 	defer func() {
 		outcome := "success"
 		if resultErr != nil {

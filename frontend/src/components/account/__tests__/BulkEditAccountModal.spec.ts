@@ -95,6 +95,22 @@ function mountModal(extraProps: Record<string, unknown> = {}) {
 }
 
 describe('BulkEditAccountModal', () => {
+  it('applies Prism alone, excludes BPS and preserves unselected fields', async () => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
+    await wrapper.get('[data-testid="bulk-apply-prism-codex"]').setValue(true)
+    await wrapper.get('[data-testid="prism-codex-toggle"]').setValue(true)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: { openai_prism_codex: true, openai_excel_bps: false }
+    })
+    wrapper.unmount()
+  })
+  it('does not offer Prism to mixed account types', () => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth', 'apikey'] })
+    expect(wrapper.find('[data-testid="bulk-apply-prism-codex"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
   it('repairs OAuth alias scope without replacing mappings or enabling BPS', async () => {
     const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
     await wrapper.get('[data-testid="enable-model-aliases"]').setValue(true)

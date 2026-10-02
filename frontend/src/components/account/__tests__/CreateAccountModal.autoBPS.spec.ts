@@ -165,6 +165,24 @@ describe('CreateAccountModal auto BPS switch', () => {
     expect(wrapper.emitted('created')).toHaveLength(1)
   })
 
+  it('creates Prism accounts with existing OAuth credentials without automatic BPS rules', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Prism')
+    await wrapper.get(toggleSelector).trigger('click')
+    await wrapper.get('[data-testid="prism-codex-toggle"]').setValue(true)
+    expect(wrapper.find(toggleSelector).exists()).toBe(false)
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+    wrapper.getComponent(OAuthAuthorizationFlowStub).vm.$emit('validate-refresh-token', 'rt-1')
+    await flushPromises()
+    expect(mocks.createAccount).toHaveBeenCalledTimes(1)
+    expect(mocks.createAccount.mock.calls[0][0]).toMatchObject({
+      credentials: { access_token: 'at' }, extra: { openai_prism_codex: true, openai_excel_bps: false }
+    })
+    expect(mocks.createPlan).not.toHaveBeenCalled()
+  })
+
   it('applies the configured interval and BPS options to each newly created account', async () => {
     const wrapper = await openOAuthStep({ interval: '*/10 * * * *', cacheCreationAsInput: false })
     wrapper.getComponent(OAuthAuthorizationFlowStub).vm.$emit('validate-refresh-token', ['rt-1', 'rt-2'].join('\n'))
