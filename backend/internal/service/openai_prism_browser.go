@@ -69,13 +69,17 @@ func prismBrowserAdapterURL(baseURL string) (string, error) {
 
 // prismBrowserAdapterMisconfigured reports the adapter's own authentication and
 // routing failures: the gateway and adapter disagree on the bridge key or path.
-// Passing those statuses through would tell the client its API key was rejected.
-func prismBrowserAdapterMisconfigured(status int) bool {
+// Account-level failures (for example prism_auth_required) must be returned to
+// the caller unchanged so an operator can repair the selected Prism account.
+func prismBrowserAdapterMisconfigured(status int, body []byte) bool {
 	switch status {
-	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusMethodNotAllowed:
+	case http.StatusUnauthorized:
+		return strings.TrimSpace(gjson.GetBytes(body, "error.type").String()) != "prism_auth_required"
+	case http.StatusForbidden, http.StatusNotFound, http.StatusMethodNotAllowed:
 		return true
+	default:
+		return false
 	}
-	return false
 }
 
 // prismBrowserAdapterErrorMessage tells an admin why the adapter refused a test
@@ -111,7 +115,7 @@ func (s *OpenAIGatewayService) forwardPrismBrowser(ctx context.Context, c *gin.C
 		return nil, err
 	}
 	if status != http.StatusOK {
-		if prismBrowserAdapterMisconfigured(status) {
+		if prismBrowserAdapterMisconfigured(status, responseBody) {
 			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "prism_unavailable", "message": "Prism adapter rejected the gateway; check the adapter key and endpoint"}})
 			return nil, fmt.Errorf("prism adapter returned HTTP %d", status)
 		}

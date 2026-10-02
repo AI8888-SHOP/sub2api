@@ -194,6 +194,7 @@ func TestPrismBrowserAdapterMisconfigurationIsNotTheClientsAuthFailure(t *testin
 		wantStatus int
 	}{
 		{name: "bridge key mismatch", status: http.StatusUnauthorized, body: `{"error":{"type":"unauthorized"}}`, wantStatus: http.StatusBadGateway},
+		{name: "account session missing", status: http.StatusUnauthorized, body: `{"error":{"type":"prism_auth_required","message":"Prism did not establish a browser session for this OAuth account"}}`, wantStatus: http.StatusUnauthorized},
 		{name: "adapter path mismatch", status: http.StatusNotFound, body: `{"error":{"type":"not_found"}}`, wantStatus: http.StatusBadGateway},
 		{name: "request refused before dispatch", status: http.StatusUnprocessableEntity, body: `{"error":{"type":"unsupported_request","message":"Prism adapter does not yet support tools or server-side conversation state"}}`, wantStatus: http.StatusUnprocessableEntity},
 	} {
