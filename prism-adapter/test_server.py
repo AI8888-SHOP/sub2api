@@ -28,9 +28,48 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(prompt, "[instructions]\nAnswer exactly.\n\n[user]\nhi")
         self.assertTrue(stream)
 
+    def test_compatibility_options_are_ignored(self):
+        prompt, stream = adapter.parse_prompt({
+            "model": adapter.MODEL,
+            "stream": True,
+            "include": ["reasoning.encrypted_content"],
+            "service_tier": "priority",
+            "reasoning": {"effort": "high", "summary": "auto"},
+            "input": "hi",
+        })
+        self.assertEqual(prompt, "[user]\nhi")
+        self.assertTrue(stream)
+
+    def test_invalid_reasoning_shape_is_rejected(self):
+        with self.assertRaises(adapter.AdapterError):
+            adapter.parse_prompt({
+                "model": adapter.MODEL,
+                "reasoning": {"effort": "unsupported"},
+                "input": "hi",
+            })
+
+    def test_encrypted_reasoning_history_is_ignored(self):
+        prompt, _ = adapter.parse_prompt({
+            "model": adapter.MODEL,
+            "input": [
+                {"type": "reasoning", "encrypted_content": "opaque-history"},
+                {"type": "function_call_output", "call_id": "call_1", "output": "ignored"},
+                {"type": "message", "role": "user", "content": "continue"},
+            ],
+        })
+        self.assertEqual(prompt, "[user]\ncontinue")
+
+    def test_unknown_include_is_rejected(self):
+        with self.assertRaises(adapter.AdapterError):
+            adapter.parse_prompt({
+                "model": adapter.MODEL,
+                "include": ["message.output_text.logprobs"],
+                "input": "hi",
+            })
+
     def test_unsupported_features_fail_closed(self):
         for change in ({"model": "gpt-6-astra"}, {"tools": [{"type": "function", "name": "x"}]},
-                       {"previous_response_id": "resp_1"}, {"reasoning": {"effort": "high"}}):
+                       {"previous_response_id": "resp_1"}):
             request = {"model": "gpt-5.6-sol", "input": "hi", **change}
             with self.assertRaises(adapter.AdapterError):
                 adapter.parse_prompt(request)

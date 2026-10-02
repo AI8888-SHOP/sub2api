@@ -29,6 +29,23 @@ MODEL = "gpt-5.6-sol"
 PROJECT_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f-]{27,}$")
 ACCOUNT_ID = re.compile(r"^[1-9][0-9]{0,18}$")
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/153 Safari/537.36"
+# Codex clients request this optional field by default. Prism does not expose
+# encrypted reasoning content, so it is safe to ignore the request for it.
+IGNORABLE_INCLUDE = {"reasoning.encrypted_content"}
+REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
+REASONING_SUMMARIES = {"none", "auto", "concise", "detailed"}
+# These records belong to the Responses protocol/tool executor, not to the
+# plain-text Prism turn. Drop them when replaying a client's history.
+IGNORABLE_INPUT_TYPES = {
+    "reasoning", "item_reference", "additional_tools",
+    "function_call", "function_call_output",
+    "custom_tool_call", "custom_tool_call_output",
+    "computer_call", "computer_call_output",
+    "web_search_call", "file_search_call", "mcp_call",
+    "mcp_list_tools", "mcp_approval_request", "mcp_approval_response",
+    "code_interpreter_call", "image_generation_call",
+    "local_shell_call", "shell_call", "apply_patch_call", "tool_search_call",
+}
 
 
 class AdapterError(Exception):
@@ -45,13 +62,26 @@ def parse_prompt(payload):
         raise AdapterError(422, "unsupported_request", "Prism adapter does not yet support tools or server-side conversation state")
     if any(payload.get(key) is not None for key in ("max_output_tokens", "temperature", "top_p")) or payload.get("background") or payload.get("store"):
         raise AdapterError(422, "unsupported_request", "Generation limits, sampling, background and storage options are not supported")
-    if payload.get("tool_choice", "none") not in ("none", "auto") or payload.get("include") or payload.get("service_tier"):
+    if payload.get("tool_choice", "none") not in ("none", "auto"):
+        raise AdapterError(422, "unsupported_request", "Requested response options are not supported")
+    include = payload.get("include")
+    if include is not None:
+        if not isinstance(include, list) or not all(isinstance(item, str) for item in include):
+            raise AdapterError(422, "unsupported_request", "Requested response options are not supported")
+        if any(item not in IGNORABLE_INCLUDE for item in include):
+            raise AdapterError(422, "unsupported_request", "Requested response options are not supported")
+    service_tier = payload.get("service_tier")
+    if service_tier is not None and not isinstance(service_tier, str):
         raise AdapterError(422, "unsupported_request", "Requested response options are not supported")
     text_options = payload.get("text") or {}
     if not isinstance(text_options, dict) or text_options.get("format", {"type": "text"}) != {"type": "text"}:
         raise AdapterError(422, "unsupported_request", "Only plain text output is supported")
     reasoning = payload.get("reasoning") or {}
-    if not isinstance(reasoning, dict) or reasoning.get("effort", "medium") != "medium" or reasoning.get("summary") not in (None, "none"):
+    if not isinstance(reasoning, dict):
+        raise AdapterError(422, "unsupported_reasoning", "Prism browser currently provides medium reasoning only")
+    effort = reasoning.get("effort", "medium")
+    summary = reasoning.get("summary")
+    if effort not in REASONING_EFFORTS or (summary is not None and summary not in REASONING_SUMMARIES):
         raise AdapterError(422, "unsupported_reasoning", "Prism browser currently provides medium reasoning only")
     if not isinstance(payload.get("stream", False), bool):
         raise AdapterError(400, "invalid_request", "stream must be a boolean")
@@ -67,6 +97,11 @@ def parse_prompt(payload):
             raise AdapterError(400, "invalid_request", "instructions must be text")
         parts.append("[instructions]\n" + instructions)
     for item in items:
+        # Responses history can contain encrypted reasoning records. They are
+        # not user-visible text and Prism cannot consume them, so omit them
+        # while retaining the surrounding message history.
+        if isinstance(item, dict) and item.get("type") in IGNORABLE_INPUT_TYPES:
+            continue
         if not isinstance(item, dict) or item.get("type", "message") != "message":
             raise AdapterError(422, "unsupported_input", "Prism adapter accepts text messages only")
         role = item.get("role", "user")
@@ -223,7 +258,11 @@ class BrowserTurn:
             began = False
             try:
                 context = browser.new_context(user_agent=USER_AGENT, service_workers="block")
-                context.add_cookies([{"name": "prism_oai_access_token", "value": token,
+                # Prism's current auth middleware consumes the OpenAI session
+                # under this cookie name and exchanges it for prism_session_token.
+                # The former prism_oai_access_token name is not recognized by
+                # the current frontend and leaves the browser in anonymous mode.
+                context.add_cookies([{"name": "openai_access_token", "value": token,
                                       "domain": "prism.openai.com", "path": "/", "secure": True}])
                 page = context.new_page()
                 page.set_default_timeout(60000)

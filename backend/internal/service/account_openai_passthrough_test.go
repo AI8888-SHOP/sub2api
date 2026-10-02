@@ -47,6 +47,20 @@ func TestAccount_IsOpenAIPassthroughEnabled(t *testing.T) {
 		}
 		require.False(t, account.IsOpenAIPassthroughEnabled())
 	})
+
+	t.Run("Prism Web Agent always wins over passthrough", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Extra: map[string]any{
+				"openai_prism_browser":     true,
+				"openai_passthrough":       true,
+				"openai_oauth_passthrough": true,
+			},
+		}
+		require.True(t, account.IsPrismBrowserEnabled())
+		require.False(t, account.IsOpenAIPassthroughEnabled())
+	})
 }
 
 func TestAccount_IsExcelBPSEnabled(t *testing.T) {
@@ -221,6 +235,19 @@ func TestAccount_IsOpenAIResponsesWebSocketV2Enabled(t *testing.T) {
 			},
 		}
 		require.False(t, account.IsOpenAIResponsesWebSocketV2Enabled())
+	})
+
+	t.Run("Prism Web Agent cannot use WebSocket", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Extra: map[string]any{
+				"openai_prism_browser":                         true,
+				"openai_oauth_responses_websockets_v2_enabled": true,
+			},
+		}
+		require.False(t, account.IsOpenAIResponsesWebSocketV2Enabled())
+		require.Equal(t, OpenAIWSIngressModeOff, account.ResolveOpenAIResponsesWebSocketV2Mode(OpenAIWSIngressModePassthrough))
 	})
 }
 

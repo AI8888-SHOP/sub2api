@@ -108,6 +108,37 @@ func TestPrismBrowserForwardTerminalAndUsage(t *testing.T) {
 	}
 }
 
+func TestPrismBrowserForwardWinsOverPassthroughAndWebSocketFlags(t *testing.T) {
+	const terminal = `{"id":"resp_prism_route","status":"completed","model":"gpt-5.6-sol","output":[{"content":[{"text":"prism"}]}]}`
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/v1/responses" {
+			t.Fatalf("unexpected adapter path %q", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer fixture-bridge-key" {
+			t.Fatalf("request used a non-Prism authorization header: %q", r.Header.Get("Authorization"))
+		}
+		_, _ = io.WriteString(w, terminal)
+	}))
+	defer server.Close()
+
+	s, account := prismTestService(server.URL)
+	account.Extra["openai_passthrough"] = true
+	account.Extra["openai_oauth_responses_websockets_v2_enabled"] = true
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	result, err := s.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.6-sol","input":"route check","stream":false}`))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, 1, requests)
+	require.False(t, c.GetBool("openai_passthrough"), "Prism must not mark the request as automatic passthrough")
+	require.Contains(t, w.Body.String(), "resp_prism_route")
+}
+
 func TestPrismBrowserAdapterURLStaysOnLoopback(t *testing.T) {
 	valid := []string{"http://127.0.0.1:8319/v1", "http://[::1]:8319/v1/responses"}
 	for _, input := range valid {

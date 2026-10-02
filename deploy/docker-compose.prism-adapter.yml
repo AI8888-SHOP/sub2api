@@ -1,0 +1,45 @@
+services:
+  prism-adapter:
+    image: ghcr.io/ai8888-shop/sub2api-prism-worker:latest
+    container_name: sub2api-prism-adapter
+    restart: unless-stopped
+    network_mode: container:sub2api
+    init: true
+    user: "0:0"
+    working_dir: /adapter
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        install -o root -g root -m 4755
+        /ms-playwright/chromium-1187/chrome-linux/chrome_sandbox
+        /ms-playwright/chromium-1187/chrome-linux/chrome-sandbox
+        && chmod 1777 /tmp
+        && exec setpriv --reuid=10001 --regid=10001 --clear-groups
+        python3 /adapter/server.py
+    environment:
+      PRISM_ADAPTER_API_KEY: ${GATEWAY_PRISM_BROWSER_API_KEY:?required}
+      PRISM_ADAPTER_CHROME: /ms-playwright/chromium-1187/chrome-linux/chrome
+      CHROME_DEVEL_SANDBOX: /ms-playwright/chromium-1187/chrome-linux/chrome-sandbox
+      PRISM_ADAPTER_STATE_DIR: /state
+      PYTHONPATH: /pydeps
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOME: /state
+    volumes:
+      - ../prism-adapter:/adapter:ro
+      - ../prism-adapter-runtime/pydeps155:/pydeps:ro
+      - ../prism-adapter-runtime/state:/state
+    shm_size: 256mb
+    security_opt:
+      - seccomp:unconfined
+    cap_add:
+      - SYS_ADMIN
+    mem_limit: 900m
+    memswap_limit: 900m
+    cpus: 1
+    pids_limit: 256
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8319/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

@@ -136,6 +136,14 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	reqStream bool,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
+	// A Prism Web Agent account must never reach this function, even if a
+	// scheduler snapshot or a compatibility caller still carries passthrough
+	// flags.  Forward normally routes it before the passthrough branch; this
+	// guard protects retries and direct callers from silently leaking to
+	// chatgpt.com.
+	if accountHasPrismBrowser(account) {
+		return s.forwardPrismBrowser(ctx, c, account, body, startTime)
+	}
 	requestedModel := reqModel
 	upstreamPassthroughModel := ""
 	if isOpenAIResponsesCompactPath(c) && !account.IsCopilotSDKEnabled() {

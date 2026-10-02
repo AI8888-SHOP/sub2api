@@ -2176,6 +2176,12 @@ func (a *Account) IsOveragesEnabled() bool {
 // 兼容字段：accounts.extra.openai_oauth_passthrough（历史 OAuth 开关）。
 // 字段缺失或类型不正确时，按 false（关闭）处理。
 func (a *Account) IsOpenAIPassthroughEnabled() bool {
+	// Prism Web Agent owns the complete upstream route.  Keep this guard at the
+	// account predicate as well as in Forward: scheduler, compatibility and
+	// retry paths all consult this method before entering automatic passthrough.
+	if a.IsPrismBrowserEnabled() {
+		return false
+	}
 	if a.IsCopilotSDKEnabled() {
 		return true
 	}
@@ -2203,17 +2209,28 @@ const (
 // normal Codex OAuth token.
 const PrismProtocolKey = "openai_prism"
 
+// IsPrismBrowserEnabled reports the account-level Prism Web Agent switch.
+// Browser Prism is an OAuth-only route and is deliberately independent from
+// the legacy direct Prism protocol (openai_prism).
+func (a *Account) IsPrismBrowserEnabled() bool {
+	if a == nil || a.Platform != PlatformOpenAI || a.Type != AccountTypeOAuth || a.IsShadow() || a.Extra == nil {
+		return false
+	}
+	enabled, _ := a.Extra["openai_prism_browser"].(bool)
+	return enabled
+}
+
 const (
-	PrismTemplateKey                    = "prism_template"
-	PrismCookieKey                      = "prism_cookie"
-	PrismProjectIDKey                   = "prism_projectId"
-	PrismUserIDKey                      = "prism_userId"
-	PrismSandboxURLKey                  = "prism_sandbox_url"
-	PrismSandboxTokenKey                = "prism_sandbox_token"
-	PrismOmitUnsupportedToolsKey        = "openai_prism_omit_unsupported_tools"
-	PrismIgnoreEncryptedContentKey      = "openai_prism_ignore_encrypted_content"
-	PrismAutoDisableOn403Key            = "openai_prism_auto_disable_on_403"
-	PrismCacheCreationAsInputKey        = "openai_prism_cache_creation_as_input"
+	PrismTemplateKey               = "prism_template"
+	PrismCookieKey                 = "prism_cookie"
+	PrismProjectIDKey              = "prism_projectId"
+	PrismUserIDKey                 = "prism_userId"
+	PrismSandboxURLKey             = "prism_sandbox_url"
+	PrismSandboxTokenKey           = "prism_sandbox_token"
+	PrismOmitUnsupportedToolsKey   = "openai_prism_omit_unsupported_tools"
+	PrismIgnoreEncryptedContentKey = "openai_prism_ignore_encrypted_content"
+	PrismAutoDisableOn403Key       = "openai_prism_auto_disable_on_403"
+	PrismCacheCreationAsInputKey   = "openai_prism_cache_creation_as_input"
 )
 
 func (a *Account) IsPrismProtocol() bool {
@@ -2252,7 +2269,7 @@ func (a *Account) IsExcelBPSEnabled() bool {
 	if a == nil || a.Platform != PlatformOpenAI || a.Type != AccountTypeOAuth || a.IsShadow() || a.IsOpenAIAgentIdentity() || a.IsOpenAIPersonalAccessToken() {
 		return false
 	}
-	if a.IsPrismProtocol() {
+	if a.IsPrismProtocol() || a.IsPrismBrowserEnabled() {
 		return false
 	}
 	if strings.EqualFold(strings.TrimSpace(a.GetCredential("plan_type")), "free") {
@@ -2435,7 +2452,7 @@ func (a *Account) IsCopilotSDKEnabled() bool {
 // 1. 按账号类型读取分类型字段
 // 2. 分类型字段缺失时，回退兼容字段
 func (a *Account) IsOpenAIResponsesWebSocketV2Enabled() bool {
-	if a.IsCopilotSDKEnabled() || a.isExcelBPSAllModelsEnabled() {
+	if a.IsPrismBrowserEnabled() || a.IsCopilotSDKEnabled() || a.isExcelBPSAllModelsEnabled() {
 		return false
 	}
 	if a == nil || !a.IsOpenAI() || a.Extra == nil {
@@ -2506,7 +2523,7 @@ func normalizeOpenAIWSIngressDefaultMode(mode string) string {
 // 3. 兼容 enabled 旧字段（bool）
 // 4. defaultMode（非法时回退 ctx_pool）
 func (a *Account) ResolveOpenAIResponsesWebSocketV2Mode(defaultMode string) string {
-	if a.IsCopilotSDKEnabled() || a.isExcelBPSAllModelsEnabled() {
+	if a.IsPrismBrowserEnabled() || a.IsCopilotSDKEnabled() || a.isExcelBPSAllModelsEnabled() {
 		return OpenAIWSIngressModeOff
 	}
 	resolvedDefault := normalizeOpenAIWSIngressDefaultMode(defaultMode)
