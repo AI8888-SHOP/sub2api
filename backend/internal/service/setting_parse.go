@@ -275,8 +275,8 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky:         "",
 
 		SettingKeyAllowUserViewErrorRequests: "false",
-		SettingKeyExcelBPSImageMode:          ExcelBPSImageModeNative,
-		SettingKeyExcelBPSImageRelayEnabled:  "true",
+		SettingKeyExcelBPSImageMode:          ExcelBPSImageModeRelay,
+		SettingKeyExcelBPSImageRelayEnabled:  "false",
 		SettingKeyExcelBPSImageBaseURL:       "",
 
 		SettingKeyUsageShowLongContextBadge:     "true",
@@ -1065,9 +1065,9 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	}
 	result.ExcelBPSImageMode = settings[SettingKeyExcelBPSImageMode]
 	if result.ExcelBPSImageMode == "" {
-		result.ExcelBPSImageMode = ExcelBPSImageModeNative
+		result.ExcelBPSImageMode = ExcelBPSImageModeRelay
 	}
-	result.ExcelBPSImageRelayEnabled = settings[SettingKeyExcelBPSImageRelayEnabled] == "" || settings[SettingKeyExcelBPSImageRelayEnabled] == "true"
+	result.ExcelBPSImageRelayEnabled = settings[SettingKeyExcelBPSImageRelayEnabled] == "true"
 	result.ExcelBPSImageBaseURL = settings[SettingKeyExcelBPSImageBaseURL]
 	result.ExcelBPSImageBodyLimitMiB, _ = parseExcelBPSImageCapacity(settings[SettingKeyExcelBPSImageBodyLimitMiB], DefaultExcelBPSImageBodyLimitMiB)
 	result.ExcelBPSImageBudgetMiB, _ = parseExcelBPSImageCapacity(settings[SettingKeyExcelBPSImageBudgetMiB], DefaultExcelBPSImageBudgetMiB)

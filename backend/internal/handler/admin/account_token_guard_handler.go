@@ -144,17 +144,6 @@ func (h *AccountTokenGuardHandler) StartTwoFALogin(c *gin.Context) {
 	var job *service.OpenAITwoFALoginJob
 	var err error
 	switch input.CredentialTarget {
-	case "operations_prism":
-		status, statusErr := h.reauth.CredentialEncryptionStatus()
-		if statusErr != nil {
-			response.ErrorFrom(c, statusErr)
-			return
-		}
-		if !status.Configured {
-			response.BadRequest(c, "请先在凭证运营中启用凭据加密，再进行 Prism 2FA 导入")
-			return
-		}
-		job, err = h.svc.StartTwoFALoginForOperationsPrism(c.Request.Context(), entry)
 	case "operations":
 		status, statusErr := h.reauth.CredentialEncryptionStatus()
 		if statusErr != nil {

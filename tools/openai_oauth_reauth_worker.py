@@ -337,15 +337,6 @@ class WorkerAPI:
             raise WorkerError(str(envelope.get("message") or "sub2api request failed"))
         return envelope.get("data")
 
-    def runtime_concurrency(self) -> int:
-        data = self._post("/api/v1/internal/openai-reauth/runtime-settings", {})
-        value = data.get("worker_concurrency") if isinstance(data, dict) else None
-        if isinstance(data, dict) and "worker_concurrency" in data and value is None:
-            return self.config.concurrency
-        if type(value) is not int or not 1 <= value <= 16:
-            raise WorkerError("invalid worker concurrency from server")
-        return value
-
     def claim(self) -> dict[str, Any] | None:
         data = self._post(
             "/api/v1/internal/openai-reauth/claim",
@@ -1146,17 +1137,14 @@ def terminate_worker(_signum: int, _frame: Any) -> None:
     raise SystemExit(0)
 
 
-def _worker_loop(config: WorkerConfig, stop: Any = None) -> None:
+def _worker_loop(config: WorkerConfig) -> None:
     signal.signal(signal.SIGTERM, terminate_worker)
     protocol = load_protocol(config.protocol_root) if config.protocol_root is not None else None
     api = WorkerAPI(config)
     LOGGER.info("worker=%s ready", config.worker_id)
-    while stop is None or not stop.is_set():
+    while True:
         if not run_once(api, protocol):
-            if stop is None:
-                time.sleep(config.poll_seconds)
-            else:
-                stop.wait(config.poll_seconds)
+            time.sleep(config.poll_seconds)
 
 
 def worker_slot_config(config: WorkerConfig, slot: int) -> WorkerConfig:
@@ -1165,50 +1153,25 @@ def worker_slot_config(config: WorkerConfig, slot: int) -> WorkerConfig:
     return replace(config, worker_id=config.worker_id[:128-len(suffix)] + suffix, concurrency=1)
 
 
-def reconcile_worker_pool(context: Any, children: dict, config: WorkerConfig, target: int) -> None:
-    # Retiring processes finish their current task before exiting. They do not
-    # claim another task. Never replace a retiring slot until it has exited.
-    for slot, (child, stop) in list(children.items()):
-        if not child.is_alive():
-            child.join()
-            del children[slot]
-            if not stop.is_set():
-                raise WorkerError("a re-login worker process exited")
-    for slot, (_child, stop) in children.items():
-        if slot > target:
-            stop.set()
-    for slot in range(1, target + 1):
-        if slot not in children:
-            stop = context.Event()
-            child = context.Process(target=_worker_loop, args=(worker_slot_config(config, slot), stop))
-            child.start()
-            children[slot] = (child, stop)
-
-
 def run_worker_pool(config: WorkerConfig) -> None:
+    # Fork preserves the bundled interpreter/loader on Alpine; other platforms
+    # use spawn. Each process owns its HTTP clients, protocol state and secrets.
     context = multiprocessing.get_context("fork" if sys.platform.startswith("linux") else "spawn")
-    children = {}
-    api = WorkerAPI(config)
-    target = config.concurrency
-    next_poll = 0.0
+    children = []
     try:
-        while True:
-            now = time.monotonic()
-            if now >= next_poll:
-                try:
-                    target = api.runtime_concurrency()
-                except WorkerError:
-                    # Older API versions and temporary outages retain the last
-                    # working count; they never interrupt active credentials.
-                    pass
-                next_poll = now + 5
-            reconcile_worker_pool(context, children, config, target)
+        for slot in range(1, config.concurrency + 1):
+            child = context.Process(target=_worker_loop, args=(worker_slot_config(config, slot),))
+            child.start()
+            children.append(child)
+        while all(child.is_alive() for child in children):
             time.sleep(0.25)
+        # A supervisor (systemd or managed runtime) restarts the complete pool.
+        raise WorkerError("a re-login worker process exited")
     finally:
-        for child, _stop in children.values():
+        for child in children:
             if child.is_alive():
                 child.terminate()
-        for child, _stop in children.values():
+        for child in children:
             child.join(timeout=5)
             if child.is_alive():
                 child.kill()
@@ -1238,7 +1201,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, terminate_worker)
     LOGGER.info("worker=%s concurrency=%s ready", config.worker_id, config.concurrency)
     try:
-        if not args.once:
+        if not args.once and config.concurrency > 1:
             run_worker_pool(config)
             return 0
         while True:

@@ -4,8 +4,6 @@ export default {
   "label": "Initial login with email, password and 2FA",
   "hint": "One email----password----2FA per line (commas also supported), up to 100 entries. Initial login uses the configured login service. Imported accounts join Credential Operations by default with encrypted password/2FA storage, inspection and automatic re-login enabled. Subsequent logins use the local Worker. Enable credential encryption on this page; automatic re-login also requires a configured Worker.",
   "settings": "View relogin service settings",
-  "includePrism": "Capture Prism credentials with Playwright",
-  "includePrismHint": "Requires the Prism Playwright service. Cookie, project, and sandbox metadata are saved after login so Prism setup does not need manual entry.",
   "credentials": "Login credentials",
   "placeholder": "email----password----2FA secret",
   "nameHint": "Leave the name empty to use the email; otherwise it is used as a prefix. Click Next to enter login credentials.",

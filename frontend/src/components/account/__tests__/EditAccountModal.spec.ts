@@ -469,55 +469,6 @@ describe('EditAccountModal', () => {
     wrapper.unmount()
   })
 
-  it('keeps Prism and Excel BPS mutually exclusive in both directions', async () => {
-    const account = buildAccount()
-    account.type = 'oauth'
-    account.extra = { openai_excel_bps: true, openai_excel_bps_protocol: 'google_sheets' }
-    updateAccountMock.mockReset().mockResolvedValue(account)
-    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
-
-    const prismWrapper = mountModal(account)
-    await prismWrapper.get('[data-testid="openai-prism-protocol"]').setValue(true)
-    expect(prismWrapper.find('[data-testid="excel-bps-protocol-selector"]').exists()).toBe(false)
-    await prismWrapper.get('#edit-account-form').trigger('submit.prevent')
-    await flushPromises()
-    const prismExtra = updateAccountMock.mock.calls[0]?.[1]?.extra
-    expect(prismExtra.openai_prism).toBe(true)
-    expect(prismExtra.openai_excel_bps).toBeUndefined()
-    expect(prismExtra.openai_excel_bps_protocol).toBeUndefined()
-    prismWrapper.unmount()
-
-    const bpsAccount = { ...account, extra: { openai_prism: true } }
-    updateAccountMock.mockReset().mockResolvedValue(bpsAccount)
-    const bpsWrapper = mountModal(bpsAccount)
-    expect(bpsWrapper.get<HTMLInputElement>('[data-testid="openai-prism-protocol"]').element.checked).toBe(true)
-    await bpsWrapper.get('[data-testid="excel-bps-toggle"]').trigger('click')
-    expect(bpsWrapper.get<HTMLInputElement>('[data-testid="openai-prism-protocol"]').element.checked).toBe(false)
-    await bpsWrapper.get('#edit-account-form').trigger('submit.prevent')
-    await flushPromises()
-    const bpsExtra = updateAccountMock.mock.calls[0]?.[1]?.extra
-    expect(bpsExtra.openai_excel_bps).toBe(true)
-    expect(bpsExtra.openai_prism).toBeUndefined()
-    bpsWrapper.unmount()
-  })
-
-  it('resolves legacy conflicting protocol flags in favor of Prism when editing', async () => {
-    const account = buildAccount()
-    account.type = 'oauth'
-    account.extra = { openai_prism: true, openai_excel_bps: true }
-    updateAccountMock.mockReset().mockResolvedValue(account)
-    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
-    const wrapper = mountModal(account)
-    expect(wrapper.get<HTMLInputElement>('[data-testid="openai-prism-protocol"]').element.checked).toBe(true)
-    expect(wrapper.find('[data-testid="excel-bps-protocol-selector"]').exists()).toBe(false)
-    await wrapper.get('#edit-account-form').trigger('submit.prevent')
-    await flushPromises()
-    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
-    expect(extra.openai_prism).toBe(true)
-    expect(extra.openai_excel_bps).toBeUndefined()
-    wrapper.unmount()
-  })
-
   it('saves, restores and clears Excel BPS hosted tool omission', async () => {
     const account = buildAccount()
     account.type = 'oauth'
@@ -721,7 +672,7 @@ describe('EditAccountModal', () => {
     const options = {
       openai_excel_bps_403_recovery_interval_minutes: 360,
       openai_excel_bps_models: ['gpt-6-astra'], openai_excel_bps_mihomo: true,
-      openai_excel_bps_proxy_source: 'ip_pool',
+      openai_excel_bps_proxy_source: 'ip_pool', openai_excel_bps_ignore_images: true,
       openai_excel_bps_ignore_encrypted_content: true, openai_excel_bps_cache_creation_as_input: true,
       openai_excel_bps_auto_move_on_403: true, openai_excel_bps_403_target_group_id: 0
     }

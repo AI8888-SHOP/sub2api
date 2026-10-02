@@ -47,7 +47,6 @@ const (
 // Pending uploads reserve disk capacity before decoding. Files are never exposed
 // as a static directory and downloads use bounded streaming buffers.
 type ImageRelay struct {
-	decorateURL     func(string) string
 	baseURL         string
 	limits          ImageRelayLimits
 	key             [32]byte
@@ -105,12 +104,6 @@ func NewImageRelay(baseURL, storageRoot string) (*ImageRelay, error) {
 	relay.cleanupOrphans(time.Now())
 	go relay.cleanupLoop()
 	return relay, nil
-}
-
-func (r *ImageRelay) SetURLDecorator(decorate func(string) string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.decorateURL = decorate
 }
 
 func (r *ImageRelay) Close() error {
@@ -194,7 +187,6 @@ func (r *ImageRelay) RewriteWithImageLimit(raw []byte, scope string, maxImages i
 	}
 	r.mu.Lock()
 	baseURL, closed, limits := r.baseURL, r.closed, r.limits
-	decorate := r.decorateURL
 	r.mu.Unlock()
 	if maxImages > 0 {
 		limits.MaxImages = maxImages
@@ -248,11 +240,7 @@ func (r *ImageRelay) RewriteWithImageLimit(raw []byte, scope string, maxImages i
 				if totalBytes > limits.MaxTotalMiB<<20 {
 					return nil, fmt.Errorf("image relay inline images exceed the configured %d MiB request limit", limits.MaxTotalMiB)
 				}
-				imageURL := baseURL + ImageRelayPath + token
-				if decorate != nil {
-					imageURL = decorate(imageURL)
-				}
-				part["image_url"] = imageURL
+				part["image_url"] = baseURL + ImageRelayPath + token
 				if err := validateImage(part); err != nil {
 					return nil, err
 				}

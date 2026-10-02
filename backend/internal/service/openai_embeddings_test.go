@@ -37,25 +37,6 @@ func TestBuildOpenAIEmbeddingsURL(t *testing.T) {
 	}
 }
 
-func TestPrismAccountRejectsEmbeddingsInsteadOfUsingConfiguredAPI(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	body := []byte(`{"model":"text-embedding-3-small","input":"hello"}`)
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/embeddings", bytes.NewReader(body))
-	upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{}`))}}
-	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
-	account := &Account{ID: 42, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
-		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://api.openai.com"},
-		Extra:       map[string]any{PrismProtocolKey: true}}
-
-	result, err := svc.ForwardEmbeddings(context.Background(), c, account, body, "")
-	require.Error(t, err)
-	require.Nil(t, result)
-	require.Equal(t, http.StatusBadRequest, rec.Code)
-	require.Nil(t, upstream.lastReq)
-}
-
 func TestForwardEmbeddings_APIKeyPassthroughRecordsUsageAndBatchInput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

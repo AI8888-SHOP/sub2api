@@ -186,14 +186,6 @@ func TestExcelBPSImagesForwardContract(t *testing.T) {
 	require.Equal(t, "data:image/png;base64,aGVsbG8=", gjson.GetBytes(rec.Body.Bytes(), "data.0.url").String())
 }
 
-func TestGoogleSheetsBPSImagesRequestUsesSheetsProfile(t *testing.T) {
-	ctx := withExcelBPSProtocol(context.Background(), ExcelBPSProtocolGoogleSheets)
-	req, err := newExcelBPSImagesRequest(ctx, basispoints.ImagesGenerationsURL, "", []byte(`{"model":"gpt-image-2"}`), "token", "account")
-	require.NoError(t, err)
-	require.Equal(t, "basispoints-google-sheets-plugin", req.Header.Get("X-Openai-Internal-Basispoints-Client-Product"))
-	require.Equal(t, "google_sheets", req.Header.Get("X-Openai-Internal-Basispoints-Client-Agent-Profile"))
-}
-
 // The multipart body carries the same fields the generations endpoint takes,
 // plus exactly one image file part with the upload's own MIME type.
 func TestExcelBPSImagesEditsBody(t *testing.T) {

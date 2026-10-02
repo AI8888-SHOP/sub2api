@@ -617,9 +617,6 @@ func (s *OpenAIGatewayService) ForwardImages(
 		return nil, admissionErr
 	}
 	account = latest
-	if account != nil && account.IsPrismProtocol() {
-		return s.forwardPrismImages(ctx, c, account, parsed, requestModel)
-	}
 	switch account.Type {
 	case AccountTypeAPIKey:
 		return s.forwardOpenAIImagesAPIKey(ctx, c, account, body, parsed, channelMappedModel)

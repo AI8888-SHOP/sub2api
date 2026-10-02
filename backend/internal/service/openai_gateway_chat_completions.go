@@ -84,9 +84,6 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		return nil, admissionErr
 	}
 	account = latest
-	if account.IsPrismProtocol() {
-		return s.forwardPrismChatCompletions(ctx, c, account, body)
-	}
 	rememberOpenCodeInboundBody(c, body)
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)

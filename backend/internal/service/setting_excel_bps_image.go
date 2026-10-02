@@ -50,7 +50,7 @@ type ExcelBPSImageRelaySettings struct {
 
 func normalizeExcelBPSImageRelaySettings(enabled bool, baseURL, mode string) (ExcelBPSImageRelaySettings, error) {
 	if mode == "" {
-		mode = ExcelBPSImageModeNative
+		mode = ExcelBPSImageModeRelay
 	}
 	if mode != ExcelBPSImageModeRelay && mode != ExcelBPSImageModeNative {
 		return ExcelBPSImageRelaySettings{}, infraerrors.BadRequest("INVALID_EXCEL_BPS_IMAGE_MODE", "Image mode must be relay or native")
@@ -111,8 +111,7 @@ func (s *SettingService) GetExcelBPSImageRelaySettings(ctx context.Context) (Exc
 	if err != nil {
 		return ExcelBPSImageRelaySettings{}, infraerrors.ServiceUnavailable("EXCEL_BPS_IMAGE_SETTINGS_UNAVAILABLE", "Excel BPS image settings are unavailable")
 	}
-	enabled := values[SettingKeyExcelBPSImageRelayEnabled] == "" || values[SettingKeyExcelBPSImageRelayEnabled] == "true"
-	settings, err := normalizeExcelBPSImageRelaySettings(enabled, values[SettingKeyExcelBPSImageBaseURL], values[SettingKeyExcelBPSImageMode])
+	settings, err := normalizeExcelBPSImageRelaySettings(values[SettingKeyExcelBPSImageRelayEnabled] == "true", values[SettingKeyExcelBPSImageBaseURL], values[SettingKeyExcelBPSImageMode])
 	if err != nil {
 		return ExcelBPSImageRelaySettings{}, err
 	}

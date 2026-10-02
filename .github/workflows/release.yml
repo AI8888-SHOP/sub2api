@@ -285,18 +285,6 @@ jobs:
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME || 'skip' }}
         run: bash "$RUNNER_TEMP/release-tools/release-images.sh"
-      - name: Build and publish Prism Playwright worker
-        if: ${{ env.DRY_RUN != 'true' }}
-        env:
-          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-          GHCR_IMAGE: ghcr.io/${{ needs.prepare.outputs.owner_lower }}/sub2api-prism-worker
-        run: |
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --file tools/prism-login-worker/Dockerfile \
-            --tag "$GHCR_IMAGE:$RELEASE_VERSION" \
-            --tag "$GHCR_IMAGE:latest" \
-            --push .
       - name: Get annotated tag notes
         id: tag_message
         run: |

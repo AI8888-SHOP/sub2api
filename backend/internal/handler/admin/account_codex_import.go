@@ -631,22 +631,6 @@ func normalizeCodexImportEntry(entry codexImportEntry) (*codexImportAccount, err
 	if item.IsAgentIdentity {
 		return item, nil
 	}
-	// Prism browser captures are carried alongside the OAuth token in the same
-	// session JSON. They are intentionally copied only from an allowlist.
-	if raw, ok := entry.Value.(map[string]any); ok {
-		for _, key := range []string{"prism_cookie", "prism_project_id", "prism_user_id", "prism_sandbox_url", "prism_sandbox_token"} {
-			if value, exists := raw[key]; exists {
-				if text, isText := value.(string); isText && strings.TrimSpace(text) != "" {
-					item.Credentials[key] = strings.TrimSpace(text)
-				}
-			}
-		}
-		if value, exists := raw["prism_template"]; exists {
-			if template, valid := value.(map[string]any); valid {
-				item.Credentials["prism_template"] = template
-			}
-		}
-	}
 	if item.AccessToken == "" {
 		return nil, errors.New("缺少 accessToken/access_token")
 	}

@@ -57,7 +57,6 @@
 - **Codex ticket 管理**：提供后台采集、注入、模型选择及账号状态展示；相关开关和采集代理由管理员配置。
 - **Mihomo 出口管理**：集成采集出口管理、票据刷新策略和节点状态操作，日常业务代理与采集出口分别配置。
 - **Excel / Basispoints**：维护模型级 BPS 路由、内嵌图片 HTTPS 中转、磁盘和并发保护、结构化输出校验，以及工具历史和 transport 恢复。开启 BPS 且账号未因 403 自动关闭时，请求强制走 BPS；不支持的能力会由 BPS 返回错误，不再静默回退原 Codex 通道。
-- **Prism Web Agent**：可选接入 `jin-wind/prism2api` 研究的 Prism 网页 Agent 协议。它通过 `prism.openai.com` 的 Cookie、项目/沙箱元数据和 `response_with_tools_start/status` 任务轮询承接 Responses 请求；启用后会把完成结果转换为 OpenAI JSON/SSE。Prism 上游本身不提供原生 token SSE，因此下游流式是任务完成后的兼容 SSE，WebSocket 不支持。
 - **上游修复维护**：持续跟踪上游 Codex、Responses、工具调用、密文恢复和限流修复；先确认与本 fork 的行为差异，再按提交级别移植并补充回归测试。
 - **独立发布与升级**：使用 `AI8888-SHOP/sub2api` 的 Release、安装资源和容器镜像。版本变更见 [更新说明](https://github.com/AI8888-SHOP/sub2api/releases)；Release 成功不代表生产服务已经部署，线上状态需要单独验证。
 
@@ -67,61 +66,17 @@
 
 Sub2API 是一个 AI API 网关平台，用于分发和管理 AI 产品订阅的 API 配额。用户通过平台生成的 API Key 调用上游 AI 服务，平台负责鉴权、计费、负载均衡和请求转发。
 
-### Prism 协议账号配置
-
-Prism 是显式开关，账号 `extra` 设置 `openai_prism=true` 后才会启用。管理后台可以直接填写 Cookie、项目/用户 ID、沙盒 URL/token；后端会把这些字段归一化成标准模板。也兼容保存一个 `prism_template` JSON（来自 prism2api 的 HAR/template，不能提交到仓库）以及 `prism_cookie`。模板至少要包含以下字段：
-
-```json
-{
-  "metadata": {
-    "projectId": "…",
-    "userId": "…",
-    "sandbox_url": "https://…",
-    "sandbox_token": "…"
-  },
-  "headers": {"Referer": "https://prism.openai.com/"}
-}
-```
-
-也可以把四个元数据拆成 `prism_projectId`、`prism_userId`、`prism_sandbox_url`、`prism_sandbox_token` 凭据字段。归一化会优先复用账号已有的 Prism 字段，其次复用 OpenAI OAuth 的 `access_token`、`chatgpt_account_id`、`chatgpt_user_id` 和 ID token 身份；只有这些都缺失时才报配置错误。请求会使用 `response_with_tools_start` 提交任务，再用 `response_with_tools_status` 轮询；Cookie、sandbox token、HAR 和模板都属于敏感凭据。当前适配器支持文本 Responses、图片生成/编辑和兼容 SSE；图片请求会像 BPS 一样转换为 Responses `image_generation` 工具请求并由 Prism 完成后还原为 Images API 响应。WebSocket、Embeddings、文件输入、原生远程工具、背景任务及跨轮工具 continuation 仍不支持，不能回退到其他协议。账号设置还支持省略不支持的托管工具、忽略历史加密消息、403 自动关闭 Prism，以及将缓存创建 token 按普通输入计费；强制选择不支持的托管工具仍会明确失败。
-
-添加 OpenAI 账号时选择“2FA 登录”，勾选“同时使用 Playwright 获取 Prism 凭据”，系统会在一次登录中调用独立的 Chromium worker，自动保存 Prism Cookie、项目 ID、用户 ID 和沙盒元数据。Compose 已包含 `prism-worker` 服务；部署前在 `.env` 设置随机的 `PRISM_LOGIN_WORKER_TOKEN`，并让应用和 worker 使用同一个值。浏览器上下文是一次性的，密码、2FA 和 Cookie 不写入 worker 日志。未部署 worker 时可保持不勾选该选项，普通 2FA 导入不受影响。
-
 ## 核心功能
 
 - **多账号管理** - 支持多种上游账号类型（OAuth、API Key）
 - **API Key 分发** - 为用户生成和管理 API Key
 - **精确计费** - Token 级别的用量追踪和成本计算
 - **智能调度** - 智能账号选择，支持粘性会话
-- **并发控制** - 用户级、账号级和 API Key 级并发限制，支持可配置的 Key 等待队列
+- **并发控制** - 用户级和账号级并发限制
 - **速率限制** - 可配置的请求和 Token 速率限制
 - **内置支付系统** - 支持 EasyPay 易支付、支付宝官方、微信官方、Stripe，用户自助充值，无需独立部署支付服务（[配置指南](docs/PAYMENT_CN.md)）
 - **管理后台** - Web 界面进行监控和管理
 - **外部系统集成** - 支持通过 iframe 嵌入外部系统（如工单等），扩展管理后台功能
-
-## API Key 并发等待队列
-
-当 API Key 设置了大于 `0` 的 `concurrency_limit` 时，达到上限后的新请求会在原连接上等待空闲槽位。默认值 `0` 不增加 Key 级并发限制。等待策略是全局配置，进程启动时读取：
-
-```yaml
-gateway:
-  api_key_queue:
-    max_waiting: 5
-    timeout_seconds: 30
-```
-
-| 环境变量 | 默认值 | 说明 |
-|----------|--------|------|
-| `GATEWAY_API_KEY_QUEUE_MAX_WAITING` | `5` | 每个受限 Key 允许额外等待的请求数；`0` 关闭 Key 排队。 |
-| `GATEWAY_API_KEY_QUEUE_TIMEOUT_SECONDS` | `30` | 单个请求最长等待秒数，必须为正整数。 |
-
-- 等待名额按 Key 独立计算，不保证 FIFO；`concurrency_limit: 0` 的 Key 不进入队列。
-- 队列用于 HTTP/SSE、OpenAI Responses WebSocket 每轮请求和 Live 创建的 Key 准入，与用户级、账号级等待限制独立。
-- 等待期间复核 Key、用户及当前请求的模型/能力权限。Key 换组、平台或计费模式变化返回可重试的 `503` / `API_KEY_GROUP_CHANGED`。WebSocket 鉴权/权限失败以 `1008` 关闭，容量或临时服务错误以 `1013` 关闭。
-- 关闭排队时达到上限返回 `429` / `gateway_concurrency_limit`；队列满返回 `429` / `api_key_queue_full`；等待超时返回 `429` / `api_key_queue_timeout`。
-- 两个配置值必须为整数；负数、小数、非法字符串或超出范围会阻止启动。即使关闭排队，超时也必须为正数。
-- 修改 Compose `.env` 后需要重建容器以更新环境变量。调大等待时间时，需要确认客户端及反向代理的首字节超时。
-- 升级自动应用 `237_add_api_key_concurrency_limit.sql`，旧 Key 默认为 `0`。回退二进制不会撤销数据库新增字段。
 
 ## 技术栈
 

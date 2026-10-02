@@ -52,28 +52,6 @@ func TestCodexDirectImagesRouting(t *testing.T) {
 	}
 }
 
-func TestPrismAccountRoutesImagesThroughPrism(t *testing.T) {
-	body := []byte(`{"model":"gpt-image-2","prompt":"draw","response_format":"url"}`)
-	c, rec := newOpenAIImagesTestContext(t, body)
-	upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"status":"completed","response":{"status":"success","payload":{"id":"resp_1","output":[{"type":"image_generation_call","result":"aGVsbG8="}]}}}`))}}
-	svc := newOpenAIImagesTestService(upstream)
-	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
-	require.NoError(t, err)
-	account := directImagesTestAccount()
-	account.Extra = map[string]any{PrismProtocolKey: true}
-	account.Credentials["prism_cookie"] = "prism_session_token=test"
-	account.Credentials["prism_template"] = map[string]any{"metadata": map[string]any{"projectId":"p", "userId":"u", "sandbox_url":"https://sandbox", "sandbox_token":"s"}}
-
-	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, prismStartPath, result.UpstreamEndpoint)
-	require.Equal(t, "data:image/png;base64,aGVsbG8=", gjson.GetBytes(rec.Body.Bytes(), "data.0.url").String())
-	require.Contains(t, upstream.lastReq.URL.Path, prismStartPath)
-	require.Equal(t, "image_generation", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
-	require.Equal(t, "draw", gjson.GetBytes(upstream.lastBody, "input.0.content.0.text").String())
-}
-
 func TestCodexDirectImagesMappingBeforeRouting(t *testing.T) {
 	for _, accountType := range []string{AccountTypeOAuth, AccountTypeSetupToken} {
 		t.Run(accountType, func(t *testing.T) {
