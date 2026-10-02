@@ -426,14 +426,23 @@ jobs:
       contents: write
     env:
       RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
     steps:
       - name: Checkout default branch
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
 
       - name: Sync VERSION file to released tag
         run: |
+          # A release from an unmerged feature branch must not mutate the
+          # default/production branch or advertise code it does not contain.
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" HEAD; then
+            echo "Release commit is not part of the default branch; skipping VERSION sync"
+            exit 0
+          fi
+
           VERSION="$RELEASE_VERSION"
 
           CURRENT_VERSION=$(tr -d '\r\n' < backend/cmd/server/VERSION || true)
