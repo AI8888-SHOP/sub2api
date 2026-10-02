@@ -78,6 +78,32 @@ func (h *OpenAIOAuthReauthHandler) CreateTask(c *gin.Context) {
 	response.Accepted(c, task)
 }
 
+func (h *OpenAIOAuthReauthHandler) StartPrismRefresh(c *gin.Context) {
+	accountID, ok := parseReauthAccountID(c)
+	if !ok {
+		return
+	}
+	job, err := h.service.StartPrismRefresh(c.Request.Context(), accountID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Accepted(c, job)
+}
+
+func (h *OpenAIOAuthReauthHandler) GetPrismRefresh(c *gin.Context) {
+	accountID, ok := parseReauthAccountID(c)
+	if !ok {
+		return
+	}
+	job, found := h.service.GetPrismRefresh(accountID, c.Param("job_id"))
+	if !found {
+		response.Error(c, http.StatusNotFound, "Prism refresh job not found")
+		return
+	}
+	response.Success(c, job)
+}
+
 type reauthWorkerRequest struct {
 	WorkerID string   `json:"worker_id"`
 	Engines  []string `json:"engines"`

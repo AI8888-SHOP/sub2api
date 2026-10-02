@@ -1000,6 +1000,39 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 	return nil
 }
 
+// ApplyOpenAIPrismRefresh changes only credentials. In particular, refreshing
+// a browser cookie must not clear rate limits or restore account scheduling.
+func (r *accountRepository) ApplyOpenAIPrismRefresh(
+	ctx context.Context, accountID int64, expectedCredentials, credentials map[string]any,
+) (bool, error) {
+	expectedJSON, err := json.Marshal(normalizeJSONMap(expectedCredentials))
+	if err != nil {
+		return false, err
+	}
+	credentialsJSON, err := json.Marshal(normalizeJSONMap(credentials))
+	if err != nil {
+		return false, err
+	}
+	result, err := r.sql.ExecContext(ctx, `
+		WITH updated_account AS (
+			UPDATE accounts
+			SET credentials = $2::jsonb, updated_at = NOW()
+			WHERE id = $1 AND deleted_at IS NULL
+				AND platform = $4 AND type = $5
+				AND credentials = $3::jsonb
+			RETURNING id
+		)
+		INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)
+		SELECT $6, id, NULL, NULL FROM updated_account
+	`, accountID, string(credentialsJSON), string(expectedJSON), service.PlatformOpenAI,
+		service.AccountTypeOAuth, service.SchedulerOutboxEventAccountChanged)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
+}
+
 // ApplyOpenAIOAuthReauth atomically swaps OAuth credentials only when the
 // account still has the credential snapshot captured before protocol login.
 // Re-authentication may take several minutes; the expected-value guard keeps a

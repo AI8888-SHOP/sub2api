@@ -176,6 +176,7 @@ type OpenAIOAuthReauthTaskRecord struct {
 // so a concurrent admin edit cannot be overwritten by a stale re-auth task.
 type OpenAIOAuthReauthCredentialUpdater interface {
 	ApplyOpenAIOAuthReauth(ctx context.Context, taskID int64, workerID string, accountID int64, expectedCredentials, credentials, extra map[string]any) (bool, error)
+	ApplyOpenAIPrismRefresh(ctx context.Context, accountID int64, expectedCredentials, credentials map[string]any) (bool, error)
 }
 
 type OpenAIOAuthReauthAccountReader interface {
@@ -199,6 +200,8 @@ type OpenAIOAuthReauthService struct {
 	acquireMihomoProxy      func(context.Context, string) (string, func(), error)
 	mihomoLeaseMu           sync.Mutex
 	mihomoLeases            map[int64]func()
+	prismRefreshMu          sync.Mutex
+	prismRefreshJobs        map[int64]*OpenAIPrismRefreshJob
 }
 
 func NewOpenAIOAuthReauthService(
@@ -221,6 +224,7 @@ func NewOpenAIOAuthReauthService(
 		tokenCacheInvalidator:   tokenCacheInvalidator,
 		runtimeBlocker:          runtimeBlocker,
 		mihomoLeases:            make(map[int64]func()),
+		prismRefreshJobs:        make(map[int64]*OpenAIPrismRefreshJob),
 		acquireMihomoProxy: func(ctx context.Context, scope string) (string, func(), error) {
 			lease, err := mihomo.AcquireBPSTransientLease(ctx, scope)
 			if err != nil {

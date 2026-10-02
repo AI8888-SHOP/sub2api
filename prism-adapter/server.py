@@ -37,6 +37,9 @@ REASONING_SUMMARIES = {"none", "auto", "concise", "detailed"}
 COOKIE_NAME = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 PRISM_COOKIE_PREFIXES = ("prism_", "prism-", "__cf_", "_cfuvid", "_dd_", "crixet_")
 PRISM_COOKIE_NAMES = {"cf_clearance", "oai-did", "oai-sc"}
+PRISM_AUTH_REASONS = {"no_session_credentials", "auth_scope_changed",
+                      "session_entitlements_omitted", "subject_mismatch"}
+PRISM_SESSION_READ_FAILURES = {"missing", "invalid", "expired"}
 # These records belong to the Responses protocol/tool executor, not to the
 # plain-text Prism turn. Drop them when replaying a client's history.
 IGNORABLE_INPUT_TYPES = {
@@ -80,7 +83,26 @@ def parse_cookie_header(value):
             for name, cookie_value in cookies.items()]
 
 
-def prism_session_is_authenticated(page):
+def safe_prism_auth_diagnostic(result):
+    """Keep only bounded, non-identifying auth facts for server-side logs."""
+    result = result if isinstance(result, dict) else {}
+    status = result.get("status")
+    tier = result.get("userTier")
+    reason = result.get("resolutionReason")
+    read_failure = result.get("prismSessionReadFailure")
+    def optional_bool(value):
+        return value if isinstance(value, bool) else None
+    return {
+        "session_http_status": status if type(status) is int and 100 <= status <= 599 else None,
+        "user_tier_class": "missing" if tier is None else "logged_out" if tier == "logged_out" else "other",
+        "resolution_reason": "missing" if reason is None else reason if isinstance(reason, str) and reason in PRISM_AUTH_REASONS else "other",
+        "prism_session_read_failure": "missing" if read_failure is None else read_failure if isinstance(read_failure, str) and read_failure in PRISM_SESSION_READ_FAILURES else "other",
+        "had_openai_recovery_credential": optional_bool(result.get("hadOpenAiRecoveryCredential")),
+        "had_prism_session_token": optional_bool(result.get("hadPrismSessionToken")),
+    }
+
+
+def prism_session_is_authenticated(page, diagnostic=None):
     """Require Prism's session endpoint to identify a non-anonymous user."""
     result = page.evaluate("""async () => {
         const response = await fetch('/auth/session', {credentials: 'include'});
@@ -98,8 +120,23 @@ def prism_session_is_authenticated(page):
             }
             return false;
         };
-        return {status: response.status, authenticated: hasIdentity(payload)};
+        const details = payload && typeof payload === 'object' ? payload.resolutionDiagnostics : null;
+        return {
+            status: response.status,
+            authenticated: !!(payload && payload.session && payload.user &&
+                payload.userTier !== 'logged_out' && payload.session.auth_state !== 'anonymous' &&
+                payload.session.is_anonymous !== true && payload.user.is_anonymous !== true &&
+                hasIdentity(payload.user)),
+            userTier: payload?.userTier,
+            resolutionReason: details?.reason,
+            prismSessionReadFailure: details?.prismSessionReadFailure,
+            hadOpenAiRecoveryCredential: details?.hadOpenAiRecoveryCredential,
+            hadPrismSessionToken: details?.hadPrismSessionToken,
+        };
     }""")
+    if diagnostic is not None:
+        diagnostic.clear()
+        diagnostic.update(safe_prism_auth_diagnostic(result))
     return isinstance(result, dict) and result.get("status") == 200 and result.get("authenticated") is True
 
 
@@ -127,18 +164,21 @@ def wait_for_prism_session(page, context, timeout=60000):
     # session probe; an early probe may lock in an anonymous session.
     page.wait_for_timeout(1500)
     deadline = time.monotonic() + timeout / 1000
+    diagnostic = {}
     while time.monotonic() < deadline:
         session_cookie = next((item for item in context.cookies([BASE])
                                if item.get("name") == "prism_session_token"), None)
         if session_cookie:
             try:
-                if prism_session_is_authenticated(page):
+                if prism_session_is_authenticated(page, diagnostic):
                     return session_cookie
             except Exception:
                 # The page may still be bootstrapping or briefly navigating;
                 # retry until the bounded deadline.
                 pass
         page.wait_for_timeout(500)
+    print(json.dumps({"event": "prism_auth_required", **(diagnostic or safe_prism_auth_diagnostic({}))}),
+          file=sys.stderr, flush=True)
     return None
 
 

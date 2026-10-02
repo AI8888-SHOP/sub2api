@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -225,6 +226,7 @@ func TestPrismBrowserAdapterMisconfigurationIsNotTheClientsAuthFailure(t *testin
 			_, err := s.forwardPrismBrowser(context.Background(), c, account, []byte(`{"model":"gpt-5.6-sol","input":"hi"}`), time.Now())
 
 			require.Error(t, err)
+			require.True(t, errors.Is(err, ErrPrismBrowserResponseWritten))
 			require.Equal(t, tc.wantStatus, w.Code)
 			if tc.wantStatus == http.StatusBadGateway {
 				require.Contains(t, w.Body.String(), `"prism_unavailable"`, "the client's own API key was not rejected")

@@ -408,6 +408,8 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 			accounts.GET("/:id/openai-reauth", h.Admin.OpenAIOAuthReauth.GetStatus)
 			accounts.PUT("/:id/openai-reauth/email", h.Admin.OpenAIOAuthReauth.SaveConfig)
 			accounts.POST("/:id/openai-reauth", h.Admin.OpenAIOAuthReauth.CreateTask)
+			accounts.POST("/:id/prism-refresh", h.Admin.OpenAIOAuthReauth.StartPrismRefresh)
+			accounts.GET("/:id/prism-refresh/:job_id", h.Admin.OpenAIOAuthReauth.GetPrismRefresh)
 		}
 		accounts.POST("", h.Admin.Account.Create)
 		accounts.POST("/:id/duplicate", h.Admin.Account.Duplicate)

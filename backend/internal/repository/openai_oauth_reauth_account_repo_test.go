@@ -92,3 +92,27 @@ func TestAccountRepositoryApplyOpenAIOAuthReauthRejectsCASMiss(t *testing.T) {
 	require.False(t, applied)
 	require.Len(t, exec.execQueries, 1)
 }
+
+func TestAccountRepositoryApplyOpenAIPrismRefreshUsesCASWithoutChangingScheduling(t *testing.T) {
+	exec := &recordingSQLExecutor{result: rowsAffectedResult(1)}
+	repo := newAccountRepositoryWithSQL(nil, exec, nil)
+	applied, err := repo.ApplyOpenAIPrismRefresh(context.Background(), 42,
+		map[string]any{"access_token": "old", "prism_cookie": "old-cookie"},
+		map[string]any{"access_token": "old", "prism_cookie": "new-cookie"})
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.Len(t, exec.execQueries, 1)
+	query := normalizeSQLWhitespace(exec.execQueries[0])
+	require.Contains(t, query, "AND credentials = $3::jsonb")
+	require.Contains(t, query, "INSERT INTO scheduler_outbox")
+	require.NotContains(t, query, "rate_limit_reset_at")
+	require.NotContains(t, query, "schedulable =")
+	require.Len(t, exec.execArgs[0], 6)
+	require.Equal(t, int64(42), exec.execArgs[0][0])
+
+	exec.result = rowsAffectedResult(0)
+	applied, err = repo.ApplyOpenAIPrismRefresh(context.Background(), 42,
+		map[string]any{"access_token": "stale"}, map[string]any{"access_token": "new"})
+	require.NoError(t, err)
+	require.False(t, applied)
+}

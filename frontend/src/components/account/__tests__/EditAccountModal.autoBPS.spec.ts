@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { defineComponent } from 'vue'
+import { defineComponent, nextTick } from 'vue'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { defaultQualityBPS } from '@/utils/qualityRulePatch'
 
@@ -11,7 +11,10 @@ const mocks = vi.hoisted(() => ({
   createPlan: vi.fn(),
   updatePlan: vi.fn(),
   showError: vi.fn(),
-  showWarning: vi.fn()
+  showWarning: vi.fn(),
+  startPrismRefresh: vi.fn(),
+  getPrismRefresh: vi.fn(),
+  getById: vi.fn()
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -27,7 +30,10 @@ vi.mock('@/api/admin', () => ({
     accounts: {
       getManagementCapabilities: vi.fn().mockResolvedValue({ web_search_enabled: false, account_quota_notify_enabled: false }),
       update: mocks.updateAccount,
-      checkMixedChannelRisk: vi.fn().mockResolvedValue({ has_risk: false })
+      checkMixedChannelRisk: vi.fn().mockResolvedValue({ has_risk: false }),
+      startPrismRefresh: mocks.startPrismRefresh,
+      getPrismRefresh: mocks.getPrismRefresh,
+      getById: mocks.getById
     },
     settings: {
       getWebSearchEmulationConfig: vi.fn().mockResolvedValue({ enabled: false, providers: [] }),
@@ -119,6 +125,111 @@ describe('EditAccountModal Prism OAuth switch', () => {
     const wrapper = mountModal(buildOAuthAccount({ type: 'apikey' }))
     await flushPromises()
     expect(wrapper.find('[data-testid="openai-prism-browser-oauth-toggle"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="openai-prism-refresh"]').exists()).toBe(false)
+  })
+
+  it('refreshes saved Prism credentials and shows a successful job', async () => {
+    mocks.startPrismRefresh.mockResolvedValue({ id: 'job-1', account_id: 7, status: 'running' })
+    mocks.getPrismRefresh.mockResolvedValue({ id: 'job-1', account_id: 7, status: 'succeeded' })
+    mocks.getById.mockResolvedValue(buildOAuthAccount({ credentials: {
+      access_token: 'oauth-token', chatgpt_account_id: 'acc', prism_cookie: 'new-cookie', prism_projectId: 'new-project'
+    } }))
+    const wrapper = mountModal(buildOAuthAccount({ extra: { openai_prism_browser: true }, credentials: {
+      access_token: 'oauth-token', chatgpt_account_id: 'acc', prism_cookie: 'old-cookie',
+      prism_projectId: 'old-project', prism_session_token: 'stale-session'
+    } }))
+    await flushPromises()
+    await wrapper.get('input[data-tour="edit-account-form-name"]').setValue('Edited name')
+    vi.useFakeTimers()
+    try {
+      await wrapper.get('[data-testid="openai-prism-refresh"]').trigger('click')
+      await nextTick()
+      expect(mocks.startPrismRefresh).toHaveBeenCalledWith(7)
+      expect(wrapper.get('[data-testid="openai-prism-refresh-status"]').text()).toContain('prismRefreshRunning')
+
+      await vi.advanceTimersByTimeAsync(2000)
+      await nextTick()
+      expect(mocks.getPrismRefresh).toHaveBeenCalledWith(7, 'job-1')
+      expect(wrapper.get('[data-testid="openai-prism-refresh-status"]').text()).toContain('prismRefreshSucceeded')
+      expect(mocks.getById).toHaveBeenCalledWith(7)
+    } finally {
+      vi.useRealTimers()
+    }
+    await submit(wrapper)
+    expect(mocks.updateAccount.mock.calls[0][1]).toMatchObject({
+      name: 'Edited name', credentials: { prism_cookie: 'new-cookie', prism_projectId: 'new-project' }
+    })
+    expect(mocks.updateAccount.mock.calls[0][1].credentials.prism_session_token).toBeUndefined()
+  })
+
+  it('shows only an error code for a failed job', async () => {
+    mocks.startPrismRefresh.mockResolvedValue({ id: 'job-2', account_id: 7, status: 'failed', error_code: 'prism_capture_failed' })
+    const wrapper = mountModal(buildOAuthAccount({ extra: { openai_prism_browser: true } }))
+    await flushPromises()
+    await wrapper.get('[data-testid="openai-prism-refresh"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="openai-prism-refresh-status"]').text()).toContain('prism_capture_failed')
+
+    mocks.startPrismRefresh.mockResolvedValue({ id: 'job-3', account_id: 7, status: 'failed', error_code: 'cookie=secret value' })
+    await wrapper.get('[data-testid="openai-prism-refresh"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="openai-prism-refresh-status"]').text()).not.toContain('secret')
+  })
+
+  it.each([
+    'openai_login_failed',
+    'prism_auth_required',
+    'invalid_mfa_secret',
+    'prism_cookie_not_found',
+    'prism_metadata_not_found',
+    'prism_identity_mismatch'
+  ])('shows the safe job error code %s', async (errorCode) => {
+    mocks.startPrismRefresh.mockResolvedValue({ id: 'job-error', account_id: 7, status: 'failed', error_code: errorCode })
+    const wrapper = mountModal(buildOAuthAccount({ extra: { openai_prism_browser: true } }))
+    await flushPromises()
+    await wrapper.get('[data-testid="openai-prism-refresh"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="openai-prism-refresh-status"]').text()).toContain(errorCode)
+  })
+
+  it('shows the safe API error code without exposing an error message', async () => {
+    mocks.startPrismRefresh.mockRejectedValue({ code: 'PRISM_REFRESH_CREDENTIALS_REQUIRED', message: 'private password text' })
+    const wrapper = mountModal(buildOAuthAccount({ extra: { openai_prism_browser: true } }))
+    await flushPromises()
+    await wrapper.get('[data-testid="openai-prism-refresh"]').trigger('click')
+    await flushPromises()
+    const status = wrapper.get('[data-testid="openai-prism-refresh-status"]').text()
+    expect(status).toContain('PRISM_REFRESH_CREDENTIALS_REQUIRED')
+    expect(status).not.toContain('private password text')
+  })
+
+  it('blocks saving stale credentials if the refreshed account cannot be reloaded', async () => {
+    mocks.startPrismRefresh.mockResolvedValue({ id: 'job-4', account_id: 7, status: 'succeeded' })
+    mocks.getById.mockRejectedValue(new Error('read failed'))
+    const wrapper = mountModal(buildOAuthAccount({ extra: { openai_prism_browser: true } }))
+    await flushPromises()
+    await wrapper.get('[data-testid="openai-prism-refresh"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('prismRefreshReloadFailed')
+    expect(wrapper.get('[data-tour="account-form-submit"]').attributes('disabled')).toBeDefined()
+    await submit(wrapper)
+    expect(mocks.updateAccount).not.toHaveBeenCalled()
+  })
+
+  it('stops polling when the editor closes', async () => {
+    mocks.startPrismRefresh.mockResolvedValue({ id: 'job-5', account_id: 7, status: 'running' })
+    const wrapper = mountModal(buildOAuthAccount({ extra: { openai_prism_browser: true } }))
+    await flushPromises()
+    vi.useFakeTimers()
+    try {
+      await wrapper.get('[data-testid="openai-prism-refresh"]').trigger('click')
+      await nextTick()
+      await wrapper.setProps({ show: false })
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(mocks.getPrismRefresh).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

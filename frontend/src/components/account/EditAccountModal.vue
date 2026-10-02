@@ -44,6 +44,27 @@
         <p v-if="prismBrowserEnabled" class="mt-2 text-xs text-primary-600 dark:text-primary-400">
           {{ t('admin.accounts.openai.prismBrowserManagedEndpoint') }}
         </p>
+        <div v-if="prismBrowserEnabled && account.extra?.openai_prism_browser === true" class="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            data-testid="openai-prism-refresh"
+            :disabled="prismRefreshSubmitting || prismRefreshSyncPending || prismRefreshReloadFailed || prismRefreshJob?.status === 'running'"
+            @click="startPrismCredentialRefresh"
+          >
+            <Icon name="refresh" size="xs" class="mr-1.5" :class="{ 'animate-spin': prismRefreshSubmitting || prismRefreshJob?.status === 'running' }" />
+            {{ t('admin.accounts.openai.prismRefresh') }}
+          </button>
+          <span v-if="prismRefreshSubmitting || prismRefreshSyncPending" class="text-xs text-gray-600 dark:text-gray-300" role="status">
+            {{ t('admin.accounts.openai.prismRefreshRunning') }}
+          </span>
+          <span v-else-if="prismRefreshJob" class="text-xs text-gray-600 dark:text-gray-300" role="status" data-testid="openai-prism-refresh-status">
+            {{ prismRefreshStatusLabel }}<template v-if="prismRefreshErrorCode"> ({{ prismRefreshErrorCode }})</template>
+          </span>
+        </div>
+        <p v-if="prismRefreshReloadFailed" class="mt-2 text-xs text-red-600 dark:text-red-400" role="alert">
+          {{ t('admin.accounts.openai.prismRefreshReloadFailed') }}
+        </p>
       </div>
 
       <!-- API Key fields (only for apikey type) -->
@@ -3266,7 +3287,7 @@
         <button
           type="submit"
           form="edit-account-form"
-          :disabled="submitting"
+          :disabled="submitting || prismRefreshSubmitting || prismRefreshJob?.status === 'running' || prismRefreshSyncPending || prismRefreshReloadFailed"
           class="btn btn-primary"
           data-tour="account-form-submit"
         >
@@ -3312,7 +3333,7 @@
 <script setup lang="ts">
 import { DEFAULT_ACCOUNT_COST_MULTIPLIER, isValidAccountCostMultiplier, readAccountCostMultiplier } from '@/utils/accountCost'
 
-import { ref, reactive, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ExcelBPSModeSwitches from './ExcelBPSModeSwitches.vue'
 import { normalizeExcelBPSProtocol, type ExcelBPSMode, type ExcelBPSProtocol } from '@/utils/excelBPSDefaults'
@@ -3322,6 +3343,7 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
 import { adminAPI } from '@/api/admin'
+import type { PrismRefreshJob } from '@/api/admin/accounts'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
 import { useAccountAutoBPS } from '@/composables/useAccountAutoBPS'
 import type {
@@ -3610,6 +3632,116 @@ const submitting = ref(false)
 const editBaseUrl = ref('https://api.anthropic.com')
 const editApiKey = ref('')
 const prismBrowserEnabled = ref(false)
+const prismRefreshJob = ref<PrismRefreshJob | null>(null)
+const prismRefreshSubmitting = ref(false)
+const prismRefreshSyncPending = ref(false)
+const prismRefreshReloadFailed = ref(false)
+const prismRefreshedCredentials = ref<Record<string, unknown> | null>(null)
+let prismRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let prismRefreshGeneration = 0
+const prismRefreshSafeErrorCodes = new Set([
+  'PRISM_REFRESH_NOT_ENABLED',
+  'PRISM_REFRESH_CONFIG_READ_FAILED',
+  'PRISM_REFRESH_CREDENTIALS_REQUIRED',
+  'PRISM_REFRESH_WORKER_UNAVAILABLE',
+  'PRISM_REFRESH_ALREADY_RUNNING',
+  'credential_decryption_failed',
+  'openai_login_failed',
+  'prism_auth_required',
+  'invalid_mfa_secret',
+  'prism_cookie_not_found',
+  'prism_metadata_not_found',
+  'prism_identity_mismatch',
+  'prism_capture_failed',
+  'credentials_changed',
+  'account_changed',
+  'account_update_failed',
+  'request_failed'
+])
+
+function safePrismRefreshErrorCode(code: unknown): string {
+  return typeof code === 'string' && prismRefreshSafeErrorCodes.has(code) ? code : 'request_failed'
+}
+
+const prismRefreshStatusLabel = computed(() =>
+  t(`admin.accounts.openai.prismRefresh${prismRefreshJob.value?.status === 'succeeded' ? 'Succeeded' : prismRefreshJob.value?.status === 'failed' ? 'Failed' : 'Running'}`)
+)
+const prismRefreshErrorCode = computed(() => {
+  const code = prismRefreshJob.value?.error_code
+  return prismRefreshJob.value?.status === 'failed' ? safePrismRefreshErrorCode(code) : ''
+})
+
+function resetPrismCredentialRefresh(): void {
+  prismRefreshGeneration++
+  if (prismRefreshTimer) clearTimeout(prismRefreshTimer)
+  prismRefreshTimer = null
+  prismRefreshJob.value = null
+  prismRefreshSubmitting.value = false
+  prismRefreshSyncPending.value = false
+  prismRefreshReloadFailed.value = false
+  prismRefreshedCredentials.value = null
+}
+
+async function syncPrismRefreshCredentials(accountID: number, generation: number): Promise<void> {
+  prismRefreshSyncPending.value = true
+  try {
+    const account = await adminAPI.accounts.getById(accountID)
+    if (generation !== prismRefreshGeneration) return
+    const credentials = account?.credentials as Record<string, unknown> | undefined
+    if (account.id !== accountID || typeof credentials?.prism_cookie !== 'string' || !credentials.prism_cookie) {
+      throw new Error('Prism credentials are unavailable')
+    }
+    prismRefreshedCredentials.value = Object.fromEntries(
+      Object.entries(credentials).filter(([key]) => key.startsWith('prism_'))
+    )
+  } catch {
+    if (generation === prismRefreshGeneration) prismRefreshReloadFailed.value = true
+  } finally {
+    if (generation === prismRefreshGeneration) prismRefreshSyncPending.value = false
+  }
+}
+
+async function pollPrismCredentialRefresh(accountID: number, jobID: string, generation: number): Promise<void> {
+  try {
+    const job = await adminAPI.accounts.getPrismRefresh(accountID, jobID)
+    if (generation !== prismRefreshGeneration) return
+    prismRefreshJob.value = job
+    if (job.status === 'running') {
+      prismRefreshTimer = setTimeout(() => void pollPrismCredentialRefresh(accountID, jobID, generation), 2000)
+    } else if (job.status === 'succeeded') {
+      await syncPrismRefreshCredentials(accountID, generation)
+    }
+  } catch (error) {
+    if (generation !== prismRefreshGeneration) return
+    prismRefreshJob.value = { id: jobID, account_id: accountID, status: 'failed', error_code: safePrismRefreshErrorCode((error as { code?: unknown })?.code) }
+  }
+}
+
+async function startPrismCredentialRefresh(): Promise<void> {
+  if (!props.account || prismRefreshSubmitting.value || prismRefreshSyncPending.value || prismRefreshJob.value?.status === 'running' || prismRefreshReloadFailed.value) return
+  const accountID = props.account.id
+  const generation = ++prismRefreshGeneration
+  prismRefreshSubmitting.value = true
+  prismRefreshJob.value = null
+  try {
+    const job = await adminAPI.accounts.startPrismRefresh(accountID)
+    if (generation !== prismRefreshGeneration) return
+    prismRefreshJob.value = job
+    if (job.status === 'running') {
+      prismRefreshTimer = setTimeout(() => void pollPrismCredentialRefresh(accountID, job.id, generation), 2000)
+    } else if (job.status === 'succeeded') {
+      await syncPrismRefreshCredentials(accountID, generation)
+    }
+  } catch (error) {
+    if (generation !== prismRefreshGeneration) return
+    prismRefreshJob.value = { id: '', account_id: accountID, status: 'failed', error_code: safePrismRefreshErrorCode((error as { code?: unknown })?.code) }
+  } finally {
+    if (generation === prismRefreshGeneration) prismRefreshSubmitting.value = false
+  }
+}
+
+watch(() => [props.show, props.account?.id] as const, resetPrismCredentialRefresh)
+onUnmounted(resetPrismCredentialRefresh)
 
 // ── 国产供应商（Kimi / Zhipu / DeepSeek）account_mode / api_protocol 编辑 ──
 // account_mode 决定额度/余额监控路径，api_protocol 决定转发端点与格式；
@@ -5554,6 +5686,10 @@ const submitUpdateAccount = async (accountID: number, updatePayload: Record<stri
 const handleSubmit = async () => {
   if (bpsDefaults.loading.value) return
   if (!props.account) return
+  if (prismRefreshSubmitting.value || prismRefreshJob.value?.status === 'running' || prismRefreshSyncPending.value || prismRefreshReloadFailed.value) {
+    if (prismRefreshReloadFailed.value) appStore.showError(t('admin.accounts.openai.prismRefreshReloadFailed'))
+    return
+  }
   const accountID = props.account.id
   if (props.account.platform === 'openai' && props.account.type === 'oauth' && !isSparkShadow.value && (excelBPSEnabled.value || excelBPS403RecoveryPending.value) && excelBPSAutoDisableOn403.value && excelBPSAutoRecoverOn403.value && !isValidBPSRecoveryInterval(excelBPSRecoveryIntervalMinutes.value)) {
     appStore.showError(t('admin.accounts.openai.excelBPS403RecoveryIntervalInvalid'))
@@ -6105,7 +6241,13 @@ const handleSubmit = async () => {
       } else {
         delete newExtra.openai_prism
       }
-      const prismCredentials = (updatePayload.credentials as Record<string, unknown>) || { ...((props.account.credentials as Record<string, unknown>) || {}) }
+      const prismCredentials = { ...((updatePayload.credentials as Record<string, unknown>) || (props.account.credentials as Record<string, unknown>) || {}) }
+      if (prismRefreshedCredentials.value) {
+        for (const key of Object.keys(prismCredentials)) {
+          if (key.startsWith('prism_')) delete prismCredentials[key]
+        }
+        Object.assign(prismCredentials, prismRefreshedCredentials.value)
+      }
       if (prismProtocolEnabled.value) {
         const setPrismCredential = (key: string, value: string) => {
           const trimmed = value.trim()

@@ -3273,6 +3273,39 @@ data: {"type":"response.failed","error":{"message":"This content was flagged"}}
 		require.False(t, reported)
 	})
 
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{name: "Prism account auth required", status: http.StatusUnauthorized, body: `{"error":{"type":"prism_auth_required"}}`},
+		{name: "Prism request unsupported", status: http.StatusUnprocessableEntity, body: `{"error":{"type":"unsupported_request"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, EndpointResponses, nil)
+			before := c.Writer.Size()
+			c.Data(tc.status, "application/json", []byte(tc.body))
+			err := fmt.Errorf("%w: adapter returned HTTP %d", service.ErrPrismBrowserResponseWritten, tc.status)
+
+			reported := openAIForwardErrorAlreadyCommunicated(c, before, err)
+			require.True(t, reported)
+			if !reported {
+				(&OpenAIGatewayHandler{}).ensureForwardErrorResponse(c, false)
+			}
+			require.Equal(t, tc.status, w.Code)
+			require.JSONEq(t, tc.body, w.Body.String())
+		})
+	}
+
+	t.Run("Prism marker without write still needs fallback", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, EndpointResponses, nil)
+		require.False(t, openAIForwardErrorAlreadyCommunicated(c, c.Writer.Size(), service.ErrPrismBrowserResponseWritten))
+	})
+
 	// H-2: cyber_policy 命中且响应已写出时，即便 err 前缀不在白名单（非流式 400 cyber
 	// 返回 "openai cyber_policy:"、透传账号返回 "upstream error:"），也须判定已透传，避免
 	// ensureForwardErrorResponse 在已写出的完整响应尾部追加 SSE 污染响应体。

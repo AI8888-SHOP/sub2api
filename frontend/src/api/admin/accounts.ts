@@ -1394,6 +1394,23 @@ export async function refreshOpenCodeGoUsage(id: number): Promise<OpenCodeGoUsag
   return data
 }
 
+export interface PrismRefreshJob {
+  id: string
+  account_id: number
+  status: 'running' | 'succeeded' | 'failed'
+  error_code?: string | null
+}
+
+export async function startPrismRefresh(id: number): Promise<PrismRefreshJob> {
+  const { data } = await apiClient.post<PrismRefreshJob>(`/admin/accounts/${id}/prism-refresh`)
+  return data
+}
+
+export async function getPrismRefresh(id: number, jobId: string): Promise<PrismRefreshJob> {
+  const { data } = await apiClient.get<PrismRefreshJob>(`/admin/accounts/${id}/prism-refresh/${encodeURIComponent(jobId)}`)
+  return data
+}
+
 export const accountsAPI = {
   list,
   listWithEtag,
@@ -1467,7 +1484,9 @@ export const accountsAPI = {
   updateOpenCodeGoUsageSettings,
   getOpenCodeGoUsage,
   setOpenCodeGoUsageAutoRefresh,
-  refreshOpenCodeGoUsage
+  refreshOpenCodeGoUsage,
+  startPrismRefresh,
+  getPrismRefresh
 }
 
 export default accountsAPI

@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/mail"
 	"net/http"
+	"net/mail"
 	"os"
 	"strings"
 	"time"
@@ -22,6 +22,28 @@ type OpenAITwoFALoginJob struct {
 	Credential map[string]any `json:"credential,omitempty"`
 	cancel     context.CancelFunc
 	expiry     *time.Timer
+}
+
+type prismWorkerFailure struct{ code string }
+
+func (e *prismWorkerFailure) Error() string { return e.code }
+
+func safePrismWorkerFailure(resp io.Reader) error {
+	var result struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.NewDecoder(io.LimitReader(resp, 16<<10)).Decode(&result) != nil || result.Error.Code != "prism_login_failed" {
+		return nil
+	}
+	switch result.Error.Message {
+	case "openai_login_failed", "prism_auth_required", "invalid_mfa_secret", "prism_cookie_not_found", "prism_metadata_not_found":
+		return &prismWorkerFailure{code: result.Error.Message}
+	default:
+		return nil
+	}
 }
 
 func ValidateOpenAITwoFALogin(entry AccountTokenGuardReloginAccount) error {
@@ -171,7 +193,7 @@ func fetchPrismWorkerCredential(ctx context.Context, entry AccountTokenGuardRelo
 	payload := map[string]any{
 		"email": entry.Email, "password": entry.Password, "mfa_secret": entry.MFASecret,
 		"access_token": guardText(oauth["access_token"]),
-		"id_token": guardText(oauth["id_token"]),
+		"id_token":     guardText(oauth["id_token"]),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -192,6 +214,11 @@ func fetchPrismWorkerCredential(ctx context.Context, entry AccountTokenGuardRelo
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if resp.StatusCode == http.StatusUnprocessableEntity {
+			if safeFailure := safePrismWorkerFailure(resp.Body); safeFailure != nil {
+				return nil, safeFailure
+			}
+		}
 		return nil, fmt.Errorf("Prism Playwright 服务返回 HTTP %d", resp.StatusCode)
 	}
 	var result struct {

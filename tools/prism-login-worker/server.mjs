@@ -1,5 +1,6 @@
 import http from 'node:http'
 import crypto from 'node:crypto'
+import { pathToFileURL } from 'node:url'
 import { chromium } from 'playwright'
 
 const port = Number(process.env.PORT || 8090)
@@ -112,6 +113,46 @@ function idTokenClaims(token) {
   }
 }
 
+export function prismSessionAuthenticated(status, payload) {
+  if (status !== 200 || !payload || typeof payload !== 'object') return false
+  if (payload.userTier === 'logged_out' || payload.userTier === 'anonymous') return false
+  const session = payload.session
+  const user = payload.user
+  if (!session || !user || typeof user !== 'object' || Array.isArray(user)) return false
+  if (session?.auth_state === 'anonymous' || session?.is_anonymous === true) return false
+  if (user.is_anonymous === true) return false
+  return ['id', 'user_id', 'openai_user_id', 'email'].some(key =>
+    typeof user[key] === 'string' && user[key].trim() !== '')
+}
+
+export function prismSessionIdentity(status, payload) {
+  if (!prismSessionAuthenticated(status, payload)) return null
+  const user = payload.user
+  const text = value => typeof value === 'string' ? value.trim() : ''
+  return {
+    prism_session_user_id: text(user.openai_user_id) || text(user.user_id) || text(user.id),
+    prism_session_email: text(user.email)
+  }
+}
+
+async function waitForPrismSession(page, timeout) {
+  const deadline = Date.now() + Math.min(timeout, 60000)
+  while (Date.now() < deadline) {
+    try {
+      const result = await page.evaluate(async () => {
+        const response = await fetch('/auth/session', { credentials: 'include' })
+        return { status: response.status, payload: await response.json() }
+      })
+      const identity = prismSessionIdentity(result.status, result.payload)
+      if (identity) return identity
+    } catch {
+      // The page may still be navigating while Prism establishes its session.
+    }
+    await page.waitForTimeout(1000)
+  }
+  throw new Error('prism_auth_required')
+}
+
 async function capture(input) {
   const browser = await chromium.launch({ headless: process.env.HEADLESS !== 'false' })
   const context = await browser.newContext({ locale: 'en-US' })
@@ -144,13 +185,14 @@ async function capture(input) {
     if (await firstVisible(page, selectors.password)) throw new Error('openai_login_failed')
     await page.goto(prismURL, { waitUntil: 'networkidle', timeout: timeoutMs })
     await page.waitForTimeout(1500)
+    const sessionIdentity = await waitForPrismSession(page, timeoutMs)
     // Only export cookies that the Prism origin itself would send. The login
     // context also contains ChatGPT/OpenAI cookies, but flattening those into
     // one Cookie header would leak cross-site credentials when the adapter
     // seeds a Prism browser context.
     const cookies = await context.cookies([prismURL])
     const cookieHeader = cookies.map(item => `${item.name}=${item.value}`).join('; ')
-    if (!cookieHeader) throw new Error('prism_cookie_not_found')
+    if (!cookies.some(item => item.name === 'prism_session_token')) throw new Error('prism_cookie_not_found')
     const claims = idTokenClaims(input.id_token)
     const projectId = observed.projectId || claims['https://api.openai.com/auth']?.chatgpt_account_id || claims.chatgpt_account_id
     const userId = observed.userId || claims['https://api.openai.com/auth']?.chatgpt_user_id || claims.sub
@@ -158,6 +200,7 @@ async function capture(input) {
     const sandboxURL = observed.sandboxURL || prismURL
     if (!projectId || !userId || !sandboxToken) throw new Error('prism_metadata_not_found')
     return {
+      ...sessionIdentity,
       prism_cookie: cookieHeader,
       prism_project_id: projectId,
       prism_user_id: userId,
@@ -190,4 +233,6 @@ const server = http.createServer(async (req, res) => {
   }
 })
 
-server.listen(port, '0.0.0.0')
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  server.listen(port, '0.0.0.0')
+}

@@ -1,5 +1,6 @@
 import contextlib
 import importlib.util
+import io
 import json
 import tempfile
 import threading
@@ -60,12 +61,61 @@ class AdapterTests(unittest.TestCase):
         class SessionPage:
             def __init__(self, result):
                 self.result = result
+                self.script = None
 
-            def evaluate(self, _script):
+            def evaluate(self, script):
+                self.script = script
                 return self.result
 
-        self.assertTrue(adapter.prism_session_is_authenticated(SessionPage({"status": 200, "authenticated": True})))
+        page = SessionPage({"status": 200, "authenticated": True})
+        self.assertTrue(adapter.prism_session_is_authenticated(page))
+        self.assertIn("payload.userTier !== 'logged_out'", page.script)
+        self.assertIn("payload.session.auth_state !== 'anonymous'", page.script)
+        self.assertIn("payload.user.is_anonymous !== true", page.script)
         self.assertFalse(adapter.prism_session_is_authenticated(SessionPage({"status": 200, "authenticated": False})))
+
+    def test_auth_diagnostic_keeps_only_safe_enums(self):
+        raw = {"status": 200, "userTier": "logged_out", "resolutionReason": "no_session_credentials",
+               "prismSessionReadFailure": "missing", "hadOpenAiRecoveryCredential": True,
+               "hadPrismSessionToken": False, "token": "secret-token"}
+        self.assertEqual(adapter.safe_prism_auth_diagnostic(raw), {
+            "session_http_status": 200, "user_tier_class": "logged_out",
+            "resolution_reason": "no_session_credentials", "prism_session_read_failure": "missing",
+            "had_openai_recovery_credential": True, "had_prism_session_token": False,
+        })
+        raw.update({"userTier": "private@example.com", "resolutionReason": "secret-token",
+                    "prismSessionReadFailure": {"token": "secret-token"},
+                    "hadOpenAiRecoveryCredential": "secret-token"})
+        safe = adapter.safe_prism_auth_diagnostic(raw)
+        self.assertEqual((safe["user_tier_class"], safe["resolution_reason"],
+                          safe["prism_session_read_failure"], safe["had_openai_recovery_credential"]),
+                         ("other", "other", "other", None))
+        self.assertNotIn("secret-token", json.dumps(safe))
+        self.assertNotIn("private@example.com", json.dumps(safe))
+
+    def test_auth_failure_log_does_not_include_raw_session_fields(self):
+        class SessionPage:
+            def wait_for_load_state(self, *_args, **_kwargs):
+                pass
+
+            def wait_for_timeout(self, *_args):
+                pass
+
+            def evaluate(self, _script):
+                return {"status": 200, "authenticated": False, "userTier": "secret-token",
+                        "resolutionReason": "private@example.com", "hadPrismSessionToken": True}
+
+        context = types.SimpleNamespace(cookies=lambda _urls: [{"name": "prism_session_token"}])
+        clock = types.SimpleNamespace(monotonic=mock.Mock(side_effect=[0, 0, 2]))
+        output = io.StringIO()
+        with mock.patch.object(adapter, "time", clock), contextlib.redirect_stderr(output):
+            self.assertIsNone(adapter.wait_for_prism_session(SessionPage(), context, timeout=1000))
+        logged = json.loads(output.getvalue())
+        self.assertEqual(logged["event"], "prism_auth_required")
+        self.assertEqual(logged["user_tier_class"], "other")
+        self.assertEqual(logged["resolution_reason"], "other")
+        self.assertNotIn("secret-token", output.getvalue())
+        self.assertNotIn("private@example.com", output.getvalue())
 
     def test_encrypted_reasoning_history_is_ignored(self):
         prompt, _ = adapter.parse_prompt({

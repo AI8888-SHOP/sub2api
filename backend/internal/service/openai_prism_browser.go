@@ -20,6 +20,14 @@ import (
 
 const prismBrowserMaxResponseBytes = 2 << 20
 
+// ErrPrismBrowserResponseWritten marks a Prism failure whose HTTP response was
+// already sent to the client. The gateway must not append a fallback error.
+var ErrPrismBrowserResponseWritten = errors.New("Prism browser response already written")
+
+func prismBrowserWrittenError(err error) error {
+	return fmt.Errorf("%w: %v", ErrPrismBrowserResponseWritten, err)
+}
+
 func prismBrowserTerminal(body []byte, model string, stream bool) (string, error) {
 	terminal := body
 	if stream {
@@ -131,31 +139,31 @@ func prismBrowserCookie(account *Account) string {
 func (s *OpenAIGatewayService) forwardPrismBrowser(ctx context.Context, c *gin.Context, account *Account, body []byte, started time.Time) (*OpenAIForwardResult, error) {
 	if isOpenAIResponsesCompactPath(c) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": "Prism adapter does not support responses/compact"}})
-		return nil, errors.New("prism adapter does not support responses/compact")
+		return nil, prismBrowserWrittenError(errors.New("prism adapter does not support responses/compact"))
 	}
 	model := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 	stream := gjson.GetBytes(body, "stream").Bool()
 	if model == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": "model is required"}})
-		return nil, errors.New("prism adapter model is required")
+		return nil, prismBrowserWrittenError(errors.New("prism adapter model is required"))
 	}
 	responseBody, upstreamHeaders, status, err := s.callPrismBrowser(ctx, account, body)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "prism_unavailable", "message": "Prism adapter unavailable; request was not replayed"}})
-		return nil, err
+		return nil, prismBrowserWrittenError(err)
 	}
 	if status != http.StatusOK {
 		if prismBrowserAdapterMisconfigured(status, responseBody) {
 			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "prism_unavailable", "message": "Prism adapter rejected the gateway; check the adapter key and endpoint"}})
-			return nil, fmt.Errorf("prism adapter returned HTTP %d", status)
+			return nil, prismBrowserWrittenError(fmt.Errorf("prism adapter returned HTTP %d", status))
 		}
 		c.Data(status, "application/json", responseBody)
-		return nil, fmt.Errorf("prism adapter returned HTTP %d", status)
+		return nil, prismBrowserWrittenError(fmt.Errorf("prism adapter returned HTTP %d", status))
 	}
 	responseID, err := prismBrowserTerminal(responseBody, model, stream)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "invalid_prism_response", "message": "Prism adapter returned no valid terminal response"}})
-		return nil, err
+		return nil, prismBrowserWrittenError(err)
 	}
 	contentType := "application/json"
 	if stream {

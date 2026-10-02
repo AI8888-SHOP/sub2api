@@ -197,9 +197,10 @@ func (r *reauthTestRepo) MarkFailed(_ context.Context, _ int64, workerID, reason
 }
 
 type reauthTestUpdater struct {
-	repo        *reauthTestRepo
-	applied     bool
-	credentials map[string]any
+	repo         *reauthTestRepo
+	applied      bool
+	credentials  map[string]any
+	prismCASMiss bool
 }
 
 type reauthTestRuntimeBlocker struct {
@@ -219,6 +220,15 @@ func (u *reauthTestUpdater) ApplyOpenAIOAuthReauth(_ context.Context, taskID int
 	u.credentials = cloneReauthMap(credentials)
 	u.repo.task.Status = OpenAIOAuthReauthStatusSucceeded
 	u.repo.task.Stage = OpenAIOAuthReauthStageSucceeded
+	return true, nil
+}
+
+func (u *reauthTestUpdater) ApplyOpenAIPrismRefresh(_ context.Context, _ int64, _ map[string]any, credentials map[string]any) (bool, error) {
+	if u.prismCASMiss {
+		return false, nil
+	}
+	u.applied = true
+	u.credentials = cloneReauthMap(credentials)
 	return true, nil
 }
 
