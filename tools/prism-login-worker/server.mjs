@@ -90,6 +90,23 @@ async function clickContinue(page) {
   return false
 }
 
+export async function openPrismOAuthPopup(page) {
+  const direct = page.getByRole('button', { name: /^Sign In or Sign Up$/i }).first()
+  if (await direct.isVisible().catch(() => false)) {
+    await direct.click()
+  } else {
+    const trigger = page.locator('#status-bar-sign-in-menu-trigger')
+    await trigger.waitFor({ state: 'visible', timeout: 15000 })
+    await trigger.click()
+    await page.getByRole('menuitem', { name: /^Sign in$/i }).click()
+  }
+  const continueButton = page.getByRole('button', { name: /^Continue with OpenAI$/i })
+  await continueButton.waitFor({ state: 'visible', timeout: 15000 })
+  const popupPromise = page.waitForEvent('popup', { timeout: 30000 })
+  await continueButton.click()
+  return popupPromise
+}
+
 function walk(value, found) {
   if (!value || typeof value !== 'object') return
   for (const [key, child] of Object.entries(value)) {
@@ -135,22 +152,50 @@ export function prismSessionIdentity(status, payload) {
   }
 }
 
-async function waitForPrismSession(page, timeout) {
+async function readPrismSession(page) {
+  try {
+    const result = await page.evaluate(async () => {
+      const response = await fetch('/auth/session', { credentials: 'include' })
+      return { status: response.status, payload: await response.json() }
+    })
+    return prismSessionIdentity(result.status, result.payload)
+  } catch {
+    // The page may still be navigating while Prism establishes its session.
+    return null
+  }
+}
+
+export async function completePrismOAuth(page, popup, input, timeout = 60000) {
   const deadline = Date.now() + Math.min(timeout, 60000)
+  let submittedStep = ''
   while (Date.now() < deadline) {
-    try {
-      const result = await page.evaluate(async () => {
-        const response = await fetch('/auth/session', { credentials: 'include' })
-        return { status: response.status, payload: await response.json() }
-      })
-      const identity = prismSessionIdentity(result.status, result.payload)
-      if (identity) return identity
-    } catch {
-      // The page may still be navigating while Prism establishes its session.
+    const identity = await readPrismSession(page)
+    if (identity) return identity
+    if (!popup.isClosed()) {
+      for (const [step, candidates, value] of [
+        ['email', selectors.email, input.email],
+        ['password', selectors.password, input.password],
+        ['otp', selectors.otp, null]
+      ]) {
+        const field = await firstVisible(popup, candidates)
+        if (!field) continue
+        if (submittedStep !== step) {
+          await field.fill(step === 'otp' ? totp(input.mfa_secret) : value)
+          if (await clickContinue(popup)) submittedStep = step
+        }
+        break
+      }
     }
     await page.waitForTimeout(1000)
   }
   throw new Error('prism_auth_required')
+}
+
+export async function establishPrismSession(page, input, timeout = 60000) {
+  const identity = await readPrismSession(page)
+  if (identity) return identity
+  const popup = await openPrismOAuthPopup(page)
+  return completePrismOAuth(page, popup, input, timeout)
 }
 
 async function capture(input) {
@@ -185,7 +230,7 @@ async function capture(input) {
     if (await firstVisible(page, selectors.password)) throw new Error('openai_login_failed')
     await page.goto(prismURL, { waitUntil: 'networkidle', timeout: timeoutMs })
     await page.waitForTimeout(1500)
-    const sessionIdentity = await waitForPrismSession(page, timeoutMs)
+    const sessionIdentity = await establishPrismSession(page, input, timeoutMs)
     // Only export cookies that the Prism origin itself would send. The login
     // context also contains ChatGPT/OpenAI cookies, but flattening those into
     // one Cookie header would leak cross-site credentials when the adapter
