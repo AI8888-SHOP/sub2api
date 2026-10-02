@@ -281,6 +281,38 @@ func TestPrismCodexWebSocketContinuation(t *testing.T) {
 	}
 }
 
+func TestPrismCodexContinuationThroughGateway(t *testing.T) {
+	for _, path := range []string{"/v1/responses", "/v1/chat/completions"} {
+		t.Run(path, func(t *testing.T) {
+			a := prismTestAccount()
+			u := &prismHTTPRecorder{}
+			conn := &prismWSConn{frames: [][]byte{[]byte(prismCompleted)}, closed: make(chan struct{})}
+			s := &OpenAIGatewayService{httpUpstream: u, accountRepo: &turnAdmissionRepo{account: a}, cfg: &config.Config{RunMode: config.RunModeSimple},
+				openaiWSPassthroughDialer: turnAdmissionDialerFunc(func(context.Context, string, http.Header, string) (openAIWSClientConn, int, http.Header, error) {
+					return conn, 101, nil, nil
+				})}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest("POST", path, nil)
+			var result *OpenAIForwardResult
+			var err error
+			if strings.Contains(path, "chat/completions") {
+				result, err = s.ForwardAsChatCompletions(context.Background(), c, a, []byte(`{"model":"gpt-6-astra","previous_response_id":"resp_previous","messages":[{"role":"tool","tool_call_id":"call_x","content":"tool-result"}]}`), "", "")
+			} else {
+				result, err = s.Forward(context.Background(), c, a, []byte(`{"model":"gpt-6-astra","previous_response_id":"resp_previous","input":[{"type":"function_call_output","call_id":"call_x","output":"tool-result"}]}`))
+			}
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, 0, u.calls)
+			require.Equal(t, "resp_previous", gjson.GetBytes(conn.frame, "previous_response_id").String())
+			require.Contains(t, string(conn.frame), "call_x")
+			require.Contains(t, string(conn.frame), "tool-result")
+			require.True(t, json.Valid(rec.Body.Bytes()), rec.Body.String())
+			require.Contains(t, rec.Body.String(), "pong")
+		})
+	}
+}
+
 func TestPrismCodexWebSocketCancellationAndNoReplay(t *testing.T) {
 	for _, failWrite := range []bool{false, true} {
 		a := prismTestAccount()
@@ -349,4 +381,48 @@ func TestPrismCodexUnsupportedEndpointsAndNoMixedErrors(t *testing.T) {
 		require.Equal(t, status, resp.StatusCode)
 		require.NoError(t, resp.Body.Close())
 	}
+}
+
+func TestPrismCodexProbeAndModelsUseProfile(t *testing.T) {
+	a := prismTestAccount()
+	u := &prismHTTPRecorder{}
+	gateway := &OpenAIGatewayService{httpUpstream: u}
+	s := &AccountTestService{httpUpstream: u, openaiGatewayService: gateway}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest("POST", "/api/v1/admin/accounts/41/test", nil)
+	require.NoError(t, s.testOpenAIAccountConnection(c, a, "gpt-6-astra", "ping", ""))
+	require.Equal(t, 1, u.calls)
+	require.Equal(t, prismCodexUserAgent, u.req.Header.Get("User-Agent"))
+	require.Contains(t, rec.Body.String(), `"test_complete"`)
+	for _, probe := range []struct{ model, mode string }{{"gpt-image-1", ""}, {"gpt-6-astra", AccountTestModeCompact}} {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest("POST", "/api/v1/admin/accounts/41/test", nil)
+		require.Error(t, s.testOpenAIAccountConnection(c, a, probe.model, "ping", probe.mode))
+		require.Contains(t, rec.Body.String(), "unsupported")
+		require.Equal(t, 1, u.calls)
+	}
+	req, err := s.buildOpenAIOAuthUpstreamModelsRequest(context.Background(), a)
+	require.NoError(t, err)
+	require.Equal(t, "/backend-api/codex/models", req.URL.Path)
+	require.Equal(t, prismCodexUserAgent, req.Header.Get("User-Agent"))
+	require.Equal(t, "Bearer test-oauth", req.Header.Get("Authorization"))
+	require.Equal(t, "application/json", req.Header.Get("Accept"))
+}
+
+func TestPrismCodexFailoverIsCommittedOnce(t *testing.T) {
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	err := finishPrismCodexForward(c, &UpstreamFailoverError{StatusCode: 429, ResponseHeaders: http.Header{"Retry-After": {"5"}}})
+	require.Error(t, err)
+	var retry *UpstreamFailoverError
+	require.False(t, errors.As(err, &retry))
+	require.Equal(t, 429, rec.Code)
+	require.Equal(t, "5", rec.Header().Get("Retry-After"))
+	require.True(t, json.Valid(rec.Body.Bytes()))
+	require.True(t, IsResponseCommitted(c))
+	before := rec.Body.String()
+	_ = finishPrismCodexForward(c, err)
+	require.Equal(t, before, rec.Body.String())
 }

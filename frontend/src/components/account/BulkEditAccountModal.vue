@@ -2635,9 +2635,9 @@ watch(
 
       // Reset all values
       baseUrl.value = ''
-  excelBPSEnabled.value = false
-  enablePrismCodex.value = false
-  prismCodexEnabled.value = false
+      excelBPSEnabled.value = false
+      enablePrismCodex.value = false
+      prismCodexEnabled.value = false
       excelBPSMode.value = 'initial'
       excelBPSProtocol.value = 'excel'
       excelBPSAllModels.value = false

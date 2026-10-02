@@ -245,6 +245,9 @@ func finishPrismCodexForward(c *gin.Context, err error) error {
 		var failed *UpstreamFailoverError
 		if errors.As(err, &failed) && failed.StatusCode >= 400 && failed.StatusCode <= 599 {
 			status = failed.StatusCode
+			if retryAfter := failed.ResponseHeaders.Get("Retry-After"); retryAfter != "" {
+				c.Header("Retry-After", retryAfter)
+			}
 		}
 		c.JSON(status, gin.H{"error": gin.H{"type": "upstream_error", "code": "prism_codex_upstream_error", "message": "Prism/Codex upstream request failed"}})
 	}
@@ -359,7 +362,7 @@ func (s *OpenAIGatewayService) doPrismCodexUpstream(req *http.Request, proxyURL 
 		defer stop()
 		defer cancel()
 		defer stream.closeConn()
-		defer pw.Close()
+		defer func() { _ = pw.Close() }()
 		for {
 			readCtx, readCancel := context.WithTimeout(ctx, s.openAIWSReadTimeout())
 			raw, readErr := conn.ReadMessage(readCtx)
