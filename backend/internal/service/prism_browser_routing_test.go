@@ -40,12 +40,24 @@ func prismTestService(endpoint string) (*OpenAIGatewayService, *Account) {
 		Credentials: map[string]any{"access_token": "fixture-oauth"}, Extra: map[string]any{"openai_prism_browser": true}}
 }
 
+func TestPrismBrowserCookieUsesExplicitCredentialOrTemplateHeader(t *testing.T) {
+	account := &Account{Credentials: map[string]any{
+		PrismTemplateKey: map[string]any{"headers": map[string]any{"Cookie": "prism_session_token=from-template"}},
+	}}
+	require.Equal(t, "prism_session_token=from-template", prismBrowserCookie(account))
+	account.Credentials[PrismCookieKey] = "prism_session_token=explicit"
+	require.Equal(t, "prism_session_token=explicit", prismBrowserCookie(account))
+	account.Credentials[PrismCookieKey] = "bad\r\ncookie"
+	require.Equal(t, "bad\r\ncookie", prismBrowserCookie(account))
+}
+
 func TestPrismBrowserCallProtectsCredentialBoundary(t *testing.T) {
 	var count int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		count++
 		if r.URL.Path != "/v1/responses" || r.Header.Get("Authorization") != "Bearer fixture-bridge-key" ||
-			r.Header.Get("X-Prism-OAuth-Token") != "fixture-oauth" || r.Header.Get("X-Prism-Account-ID") != "42" {
+			r.Header.Get("X-Prism-OAuth-Token") != "fixture-oauth" || r.Header.Get("X-Prism-Account-ID") != "42" ||
+			r.Header.Get("X-Prism-Cookie") != "prism_session_token=fixture-session" {
 			t.Error("unexpected adapter request")
 		}
 		w.Header().Set("Location", "http://127.0.0.1:1/credential-leak")
@@ -53,6 +65,7 @@ func TestPrismBrowserCallProtectsCredentialBoundary(t *testing.T) {
 	}))
 	defer server.Close()
 	s, account := prismTestService(server.URL)
+	account.Credentials[PrismCookieKey] = "prism_session_token=fixture-session"
 	if _, _, _, err := s.callPrismBrowser(context.Background(), account, []byte(`{"input":"test"}`)); err == nil {
 		t.Fatal("redirect must be rejected")
 	}

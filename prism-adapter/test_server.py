@@ -48,6 +48,25 @@ class AdapterTests(unittest.TestCase):
                 "input": "hi",
             })
 
+    def test_cookie_header_is_parsed_as_host_only_cookies(self):
+        cookies = adapter.parse_cookie_header("prism_session_token=session; __cf_bm=clearance=value")
+        self.assertEqual([item["name"] for item in cookies], ["prism_session_token", "__cf_bm"])
+        self.assertTrue(all(item["domain"] == "prism.openai.com" and item["path"] == "/" for item in cookies))
+        self.assertEqual([item["name"] for item in adapter.parse_cookie_header("chatgpt_session=do-not-forward; prism-did=did")], ["prism-did"])
+        with self.assertRaises(adapter.AdapterError):
+            adapter.parse_cookie_header("prism_session_token=bad\nvalue")
+
+    def test_anonymous_prism_session_is_rejected(self):
+        class SessionPage:
+            def __init__(self, result):
+                self.result = result
+
+            def evaluate(self, _script):
+                return self.result
+
+        self.assertTrue(adapter.prism_session_is_authenticated(SessionPage({"status": 200, "authenticated": True})))
+        self.assertFalse(adapter.prism_session_is_authenticated(SessionPage({"status": 200, "authenticated": False})))
+
     def test_encrypted_reasoning_history_is_ignored(self):
         prompt, _ = adapter.parse_prompt({
             "model": adapter.MODEL,
@@ -93,8 +112,8 @@ class AdapterTests(unittest.TestCase):
 
     def test_http_boundary_uses_real_terminal_without_usage(self):
         class FakeBrowser:
-            def run(self, account_id, token, prompt):
-                self.assert_values = (account_id, token, prompt)
+            def run(self, account_id, token, prompt, cookie=""):
+                self.assert_values = (account_id, token, prompt, cookie)
                 return "prism-123", "21"
 
         fake = FakeBrowser()
@@ -110,7 +129,7 @@ class AdapterTests(unittest.TestCase):
                        "X-Prism-OAuth-Token": "oauth-token", "Content-Type": "application/json"}
             with urlopen(Request(url, data=data, headers=headers), timeout=5) as response:
                 body = json.load(response)
-            self.assertEqual(fake.assert_values, ("300", "oauth-token", "[user]\ncandy"))
+            self.assertEqual(fake.assert_values, ("300", "oauth-token", "[user]\ncandy", ""))
             self.assertEqual(body["output"][0]["content"][0]["text"], "21")
             self.assertIsNone(body["usage"])
             with self.assertRaises(HTTPError) as denied:
@@ -222,6 +241,9 @@ class FakePage:
     def set_default_timeout(self, _timeout):
         pass
 
+    def evaluate(self, _script):
+        return {"status": 200, "authenticated": True}
+
     def route(self, _pattern, handler):
         self.route_handler = handler
 
@@ -258,12 +280,16 @@ class FakePage:
 class FakeBrowser:
     def __init__(self, page):
         self.page = page
+        self.cookies_added = []
 
     def new_context(self, **_kwargs):
         return self
 
-    def add_cookies(self, _cookies):
-        pass
+    def add_cookies(self, cookies):
+        self.cookies_added.extend(cookies)
+
+    def cookies(self, _urls=None):
+        return [{"name": "prism_session_token", "value": "fixture-session"}]
 
     def new_page(self):
         return self.page
@@ -272,14 +298,14 @@ class FakeBrowser:
         pass
 
 
-def run_turn(state, on_submit):
+def run_turn(state, on_submit, cookie=""):
     page = FakePage(on_submit)
     browser = FakeBrowser(page)
     playwright = types.SimpleNamespace(chromium=types.SimpleNamespace(launch=lambda **_kwargs: browser))
     clock = types.SimpleNamespace(monotonic=lambda: page.clock, time=time.time)
     with mock.patch.object(adapter, "sync_playwright", lambda: contextlib.nullcontext(playwright)), \
             mock.patch.object(adapter, "time", clock):
-        return adapter.BrowserTurn(state, "/fixture/chromium").run("300", "fixture-oauth", "[user]\nhi")
+        return adapter.BrowserTurn(state, "/fixture/chromium").run("300", "fixture-oauth", "[user]\nhi", cookie)
 
 
 class BrowserTurnTests(unittest.TestCase):

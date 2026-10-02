@@ -34,6 +34,9 @@ USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/153 Safa
 IGNORABLE_INCLUDE = {"reasoning.encrypted_content"}
 REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 REASONING_SUMMARIES = {"none", "auto", "concise", "detailed"}
+COOKIE_NAME = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+PRISM_COOKIE_PREFIXES = ("prism_", "prism-", "__cf_", "_cfuvid", "_dd_", "crixet_")
+PRISM_COOKIE_NAMES = {"oai-did", "oai-sc"}
 # These records belong to the Responses protocol/tool executor, not to the
 # plain-text Prism turn. Drop them when replaying a client's history.
 IGNORABLE_INPUT_TYPES = {
@@ -53,6 +56,51 @@ class AdapterError(Exception):
         super().__init__(message)
         self.status = status
         self.code = code
+
+
+def parse_cookie_header(value):
+    """Convert an explicit Cookie header into host-only Playwright cookies."""
+    if value is None or not str(value).strip():
+        return []
+    if len(value) > MAX_REQUEST_BYTES or any(ord(char) < 0x20 or ord(char) == 0x7f for char in value):
+        raise AdapterError(400, "invalid_request", "Prism browser cookie is invalid")
+    cookies = {}
+    for part in value.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        name, separator, cookie_value = part.partition("=")
+        name = name.strip()
+        if not separator or not COOKIE_NAME.fullmatch(name) or not cookie_value:
+            raise AdapterError(400, "invalid_request", "Prism browser cookie is invalid")
+        if name not in PRISM_COOKIE_NAMES and not name.startswith(PRISM_COOKIE_PREFIXES):
+            continue
+        cookies[name] = cookie_value.strip()
+    return [{"name": name, "value": cookie_value, "domain": "prism.openai.com", "path": "/", "secure": True}
+            for name, cookie_value in cookies.items()]
+
+
+def prism_session_is_authenticated(page):
+    """Require Prism's session endpoint to identify a non-anonymous user."""
+    result = page.evaluate("""async () => {
+        const response = await fetch('/auth/session', {credentials: 'include'});
+        let payload = null;
+        try { payload = await response.json(); } catch (_) {}
+        const hasIdentity = (value, depth = 0) => {
+            if (!value || typeof value !== 'object' || depth > 4) return false;
+            if (value.is_anonymous === true) return false;
+            if (value.is_anonymous === false) return true;
+            for (const key of ['openai_user_id', 'prism_user_id', 'user_id', 'email', 'id']) {
+                if (typeof value[key] === 'string' && value[key].trim()) return true;
+            }
+            for (const key of ['user', 'account', 'identity', 'session', 'data']) {
+                if (hasIdentity(value[key], depth + 1)) return true;
+            }
+            return false;
+        };
+        return {status: response.status, authenticated: hasIdentity(payload)};
+    }""")
+    return isinstance(result, dict) and result.get("status") == 200 and result.get("authenticated") is True
 
 
 def parse_prompt(payload):
@@ -251,19 +299,23 @@ class BrowserTurn:
         self.state = state
         self.chrome = chrome
 
-    def run(self, account_id, token, prompt):
+    def run(self, account_id, token, prompt, cookie=""):
         self.state.ensure_idle(account_id)
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(executable_path=self.chrome, headless=True, chromium_sandbox=True)
             began = False
             try:
                 context = browser.new_context(user_agent=USER_AGENT, service_workers="block")
-                # Prism's current auth middleware consumes the OpenAI session
-                # under this cookie name and exchanges it for prism_session_token.
-                # The former prism_oai_access_token name is not recognized by
-                # the current frontend and leaves the browser in anonymous mode.
-                context.add_cookies([{"name": "openai_access_token", "value": token,
-                                      "domain": "prism.openai.com", "path": "/", "secure": True}])
+                captured_cookies = parse_cookie_header(cookie)
+                if captured_cookies:
+                    context.add_cookies(captured_cookies)
+                # Prism exchanges this OAuth token for its own browser session
+                # when the documented prism_oai_access_token cookie is present.
+                # A generic openai_access_token cookie is ignored by Prism and
+                # leaves the page anonymous, causing project creation to hang.
+                if not any(item["name"] == "prism_oai_access_token" for item in captured_cookies):
+                    context.add_cookies([{"name": "prism_oai_access_token", "value": token,
+                                          "domain": "prism.openai.com", "path": "/", "secure": True}])
                 page = context.new_page()
                 page.set_default_timeout(60000)
                 gate = StartGate()
@@ -291,6 +343,18 @@ class BrowserTurn:
                 # A new chat does not clear files in a Prism project. Every
                 # stateless request gets a blank project, including admin tests.
                 page.goto(BASE, wait_until="domcontentloaded", timeout=60000)
+                session_cookie = next((cookie for cookie in context.cookies([BASE])
+                                       if cookie.get("name") == "prism_session_token"), None)
+                if not session_cookie:
+                    raise AdapterError(401, "prism_auth_required",
+                                       "Prism did not establish a browser session for this OAuth account")
+                try:
+                    authenticated = prism_session_is_authenticated(page)
+                except Exception:
+                    authenticated = False
+                if not authenticated:
+                    raise AdapterError(401, "prism_auth_required",
+                                       "Prism browser session is anonymous; valid Prism/OpenAI login is required")
                 page.get_by_role("button", name="New", exact=True).click(timeout=60000)
                 page.get_by_role("menuitem", name="Blank project").click(timeout=60000)
                 page.wait_for_function("new URL(location.href).searchParams.has('u')", timeout=60000)
@@ -440,6 +504,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         account_id = self.headers.get("X-Prism-Account-ID", "")
         token = self.headers.get("X-Prism-OAuth-Token", "")
+        cookie = self.headers.get("X-Prism-Cookie", "")
         if not ACCOUNT_ID.fullmatch(account_id) or not token or "\n" in token or "\r" in token:
             self.send_json(400, {"error": {"type": "invalid_request", "message": "account identity is required"}})
             return
@@ -454,7 +519,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self.lock.acquire(blocking=False):
                 raise AdapterError(429, "prism_busy", "Prism browser is busy; request was not submitted")
             try:
-                request_id, answer = self.browser_turn.run(account_id, token, prompt)
+                request_id, answer = self.browser_turn.run(account_id, token, prompt, cookie)
             finally:
                 self.lock.release()
             response = response_payload(request_id, answer)

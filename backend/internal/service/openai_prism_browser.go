@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -98,6 +99,35 @@ func prismBrowserAdapterErrorMessage(status int, body []byte) string {
 	}
 }
 
+// prismBrowserCookie returns an explicitly captured Prism browser cookie. It
+// intentionally does not fall back to the generic cookie credential, which is
+// stripped during credential sanitization and may belong to another service.
+func prismBrowserCookie(account *Account) string {
+	if account == nil {
+		return ""
+	}
+	if cookie := prismCredentialString(account, PrismCookieKey, "prism_Cookie"); cookie != "" {
+		return cookie
+	}
+	raw := account.Credentials[PrismTemplateKey]
+	var headers map[string]string
+	switch value := raw.(type) {
+	case map[string]any:
+		headers = prismStringMap(value["headers"])
+	case string:
+		var decoded map[string]any
+		if json.Unmarshal([]byte(value), &decoded) == nil {
+			headers = prismStringMap(decoded["headers"])
+		}
+	}
+	for key, value := range headers {
+		if strings.EqualFold(key, "Cookie") {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 func (s *OpenAIGatewayService) forwardPrismBrowser(ctx context.Context, c *gin.Context, account *Account, body []byte, started time.Time) (*OpenAIForwardResult, error) {
 	if isOpenAIResponsesCompactPath(c) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": "Prism adapter does not support responses/compact"}})
@@ -173,6 +203,12 @@ func (s *OpenAIGatewayService) callPrismBrowser(ctx context.Context, account *Ac
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("X-Prism-Account-ID", strconv.FormatInt(account.ID, 10))
 	req.Header.Set("X-Prism-OAuth-Token", token)
+	if cookie := prismBrowserCookie(account); cookie != "" {
+		if strings.ContainsAny(cookie, "\r\n") {
+			return nil, nil, 0, errors.New("invalid Prism browser cookie")
+		}
+		req.Header.Set("X-Prism-Cookie", cookie)
+	}
 	// The token must never pass through an account proxy, environment proxy,
 	// plugin transport, or an HTTP redirect.
 	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true}

@@ -144,7 +144,11 @@ async function capture(input) {
     if (await firstVisible(page, selectors.password)) throw new Error('openai_login_failed')
     await page.goto(prismURL, { waitUntil: 'networkidle', timeout: timeoutMs })
     await page.waitForTimeout(1500)
-    const cookies = await context.cookies(['https://chatgpt.com', 'https://openai.com', 'https://prism.openai.com'])
+    // Only export cookies that the Prism origin itself would send. The login
+    // context also contains ChatGPT/OpenAI cookies, but flattening those into
+    // one Cookie header would leak cross-site credentials when the adapter
+    // seeds a Prism browser context.
+    const cookies = await context.cookies([prismURL])
     const cookieHeader = cookies.map(item => `${item.name}=${item.value}`).join('; ')
     if (!cookieHeader) throw new Error('prism_cookie_not_found')
     const claims = idTokenClaims(input.id_token)
