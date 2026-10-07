@@ -470,6 +470,9 @@ func (s *OpenAIQuotaService) prepareUpstreamCall(ctx context.Context, accountID 
 	if account.Platform != PlatformOpenAI {
 		return "", "", "", false, infraerrors.New(http.StatusBadRequest, "OPENAI_QUOTA_INVALID_PLATFORM", "account is not an OpenAI account")
 	}
+	if account.IsOpenAISiwc() {
+		return "", "", "", false, infraerrors.BadRequest("SIWC_QUOTA_UNSUPPORTED", "SIWC allowance is managed in ChatGPT; Codex quota operations are unavailable")
+	}
 	if account.Type != AccountTypeOAuth {
 		return "", "", "", false, infraerrors.New(http.StatusBadRequest, "OPENAI_QUOTA_INVALID_TYPE", "account is not an OAuth account")
 	}

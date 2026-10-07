@@ -17,7 +17,7 @@ const plan = (): ScheduledTestPlan => ({
 })
 const bps = (): QualityBPSPolicy => ({
   failure_threshold: 2, usage_percent: 0, require_all: false, all_models: false, models: ['gpt-6-astra'],
-  omit_unsupported_tools: true, ignore_images: false, ignore_encrypted_content: true, auto_disable_on_403: false,
+  omit_unsupported_tools: true, ignore_encrypted_content: true, auto_disable_on_403: false,
   auto_move_on_403: false, target_group_id: -1, session_proxy: false, proxy_source: 'mihomo', cache_creation_as_input: false,
   pass_threshold: 2, hold_on_usage: true, recovery_interval_minutes: 60,
 })
@@ -33,6 +33,15 @@ describe('quality rule partial updates', () => {
     expect(buildQualityRulePatch(plan(), draft(), ['model', 'schedule', 'enabled'])).toEqual({
       model_id: 'new-model', cron_expression: '0 * * * *', enabled: false,
     })
+  })
+
+  it('replaces the full model selection without overwriting the rule’s grading policy', () => {
+    const source = draft()
+    Object.assign(source.pelican_config, { model_ids: ['second-model', 'second-model'] })
+    const updated = buildQualityRulePatch(plan(), source, ['model'])
+    expect(updated.model_id).toBe('new-model')
+    expect(updated.pelican_config).toMatchObject({ model_ids: ['new-model', 'second-model'],
+      quality: { expected_answer: '7', judge: { model_id: 'own-judge' } } })
   })
 
   it('preserves different questions, judges and target groups when changing restoration', () => {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/siwc"
 	"net/http"
 	"sort"
 	"strings"
@@ -22,6 +23,20 @@ func (s *OpenAIGatewayService) FetchOpenAIModelsList(ctx context.Context, accoun
 	credentialAccount, err := resolveCredentialAccount(ctx, s.accountRepo, account)
 	if err != nil {
 		return nil, fmt.Errorf("resolve model list credentials: %w", err)
+	}
+	if credentialAccount.IsOpenAISiwc() {
+		if !credentialAccount.HasSiwcSharing() {
+			return nil, fmt.Errorf("SIWC sharing consent is required")
+		}
+		token, _, err := s.GetAccessToken(ctx, credentialAccount)
+		if err != nil {
+			return nil, err
+		}
+		body, err := siwc.New().Catalog(ctx, upstreamModelsProxyURL(account), token)
+		if err != nil {
+			return nil, err
+		}
+		return &OpenAIModelsResponse{Body: body, ETag: codexModelsManifestBodyETag(body)}, nil
 	}
 	if credentialAccount.IsOpenAIOAuth() {
 		clientVersion := CodexCanonicalClientVersion()
@@ -427,4 +442,59 @@ func (s *OpenAIGatewayService) fetchScheduledOpenAIModels(ctx context.Context, g
 		excluded[account.ID] = struct{}{}
 	}
 	return nil, lastErr
+}
+
+// FetchSiwcOnlyGroupModels keeps an all-SIWC group's successful empty catalog
+// authoritative. Ordinary and mixed groups retain their existing listing path.
+func (s *OpenAIGatewayService) FetchSiwcOnlyGroupModels(ctx context.Context, group *Group) (*OpenAIModelsResponse, bool, error) {
+	if s == nil || s.accountRepo == nil || group == nil {
+		return nil, false, nil
+	}
+	accounts, err := s.accountRepo.ListSchedulableByGroupID(ctx, group.ID)
+	if err != nil {
+		return nil, false, err
+	}
+	found := false
+	for i := range accounts {
+		if !accounts[i].IsOpenAISiwc() {
+			return nil, false, nil
+		}
+		found = true
+	}
+	if !found {
+		return nil, false, nil
+	}
+	entries := make([]json.RawMessage, 0)
+	seen := map[string]bool{}
+	for i := range accounts {
+		if !accounts[i].HasSiwcSharing() {
+			continue
+		}
+		response, err := s.FetchOpenAIModelsList(ctx, &accounts[i])
+		if err != nil {
+			return nil, true, err
+		}
+		body, err := projectAccountModelsBody(response.Body, &accounts[i], group, false)
+		if err != nil {
+			return nil, true, err
+		}
+		_, models, err := modelCatalogEntries(body, "data")
+		if err != nil {
+			return nil, true, err
+		}
+		for _, raw := range models {
+			var model struct {
+				ID string `json:"id"`
+			}
+			if json.Unmarshal(raw, &model) != nil {
+				return nil, true, fmt.Errorf("invalid SIWC catalog")
+			}
+			if !seen[model.ID] && (!group.ModelAllowlistEnabled() || len(group.ModelAllowlist.FilterForListing([]string{model.ID})) > 0) {
+				seen[model.ID] = true
+				entries = append(entries, raw)
+			}
+		}
+	}
+	body, err := json.Marshal(map[string]any{"object": "list", "data": entries})
+	return &OpenAIModelsResponse{Body: body}, true, err
 }

@@ -1,5 +1,5 @@
 <!--
-目标仓库：AI8888-SHOP/sub2api；base 分支通常为 production，提交前核实。
+目标仓库：ranxi2001/sub2api；base 分支通常为 production，提交前核实。
 先读根目录 CONTRIBUTING.md。保留相关小节；不适用项写“不适用 + 原因”，小型文档 PR 可简化复现和风险说明，但必须保留 Agent 使用声明。
 不要把未执行的命令写成通过。日志、截图、请求样例和附件必须脱敏。
 -->

@@ -50,7 +50,7 @@
         <input
           v-model="form.name"
           type="text"
-          :required="!isGrokSSOInputMethod && !isOpenAITwoFA"
+          :required="!isGrokSSOInputMethod && !isOpenAITwoFA && !isOpenAISiwc"
           class="input"
           :placeholder="t('admin.accounts.enterAccountName')"
           data-tour="account-form-name"
@@ -228,6 +228,19 @@
             <PlatformIcon platform="opencode_go" size="sm" />
             OpenCode
           </button>
+          <button
+            type="button"
+            @click="selectTypeSafePlatform()"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'typesafe'
+                ? 'bg-white text-sky-700 shadow-sm dark:bg-dark-600 dark:text-sky-300'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <PlatformIcon platform="typesafe" size="sm" />
+            TypeSafe / Jev
+          </button>
         </div>
       </div>
 
@@ -367,10 +380,10 @@
         <div class="mt-2 grid grid-cols-3 gap-3" data-tour="account-form-type">
           <button
             type="button"
-            @click="accountCategory = 'oauth-based'; openaiTwoFA = false"
+            @click="accountCategory = 'oauth-based'; openaiTwoFA = false; openaiSiwc = false"
             :class="[
               'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'oauth-based' && !openaiTwoFA
+              accountCategory === 'oauth-based' && !openaiTwoFA && !openaiSiwc
                 ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
                 : 'border-gray-200 hover:border-green-300 dark:border-dark-600 dark:hover:border-green-700'
             ]"
@@ -378,7 +391,7 @@
             <div
               :class="[
                 'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'oauth-based' && !openaiTwoFA
+                accountCategory === 'oauth-based' && !openaiTwoFA && !openaiSiwc
                   ? 'bg-green-500 text-white'
                   : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
               ]"
@@ -417,7 +430,7 @@
             </div>
           </button>
 
-          <button type="button" data-testid="openai-two-fa" @click="accountCategory = 'oauth-based'; openaiTwoFA = true"
+          <button type="button" data-testid="openai-two-fa" @click="accountCategory = 'oauth-based'; openaiTwoFA = true; openaiSiwc = false"
             :class="['flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
               isOpenAITwoFA ? 'border-green-500 bg-green-50 dark:bg-green-900/20' : 'border-gray-200 dark:border-dark-600']">
             <Icon name="shield" size="sm" />
@@ -427,6 +440,11 @@
             </div>
           </button>
 
+          <button type="button" data-testid="openai-siwc" @click="accountCategory = 'oauth-based'; openaiSiwc = true; openaiTwoFA = false"
+            :class="['flex items-center gap-3 rounded-lg border-2 p-3 text-left', isOpenAISiwc ? 'border-green-500 bg-green-50 dark:bg-green-900/20' : 'border-gray-200 dark:border-dark-600']">
+            <Icon name="link" size="sm" />
+            <div><span class="block text-sm font-medium">SIWC · OpenClaw</span><span class="text-xs text-gray-500">{{ t('tokenGuard.siwc.label') }}</span></div>
+          </button>
         </div>
         <p v-if="isOpenAITwoFA" class="input-hint">{{ t('tokenGuard.twoFA.nameHint') }}</p>
       </div>
@@ -1529,6 +1547,7 @@
             <div v-if="modelRestrictionMode === 'whitelist'">
               <ModelWhitelistSelector
                 v-model="allowedModels"
+                :model-mappings="modelMappings"
                 :platform="form.platform"
                 :sync-credentials="syncPreviewCredentials"
                 @upstream-synced="upstreamModelsPreviewed = true"
@@ -2016,6 +2035,7 @@
           <div v-if="modelRestrictionMode === 'whitelist'">
             <ModelWhitelistSelector
               v-model="allowedModels"
+              :model-mappings="modelMappings"
               platform="anthropic"
               :sync-credentials="syncPreviewCredentials"
               @upstream-synced="upstreamModelsPreviewed = true"
@@ -2357,6 +2377,7 @@
           <div v-if="modelRestrictionMode === 'whitelist'">
             <ModelWhitelistSelector
               v-model="allowedModels"
+              :model-mappings="modelMappings"
               :platform="form.platform"
               :sync-credentials="syncPreviewCredentials"
               @upstream-synced="upstreamModelsPreviewed = true"
@@ -3107,6 +3128,23 @@
         </div>
       </div>
 
+      <div
+        v-if="form.platform === 'openai' && form.type === 'oauth'"
+        class="flex items-center justify-between gap-4 border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div>
+          <label class="input-label mb-0">{{ t('admin.accounts.openai.wsSseAcceleration') }}</label>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.accounts.openai.wsSseAccelerationDesc') }}
+          </p>
+        </div>
+        <Toggle
+          v-model="openaiOAuthWSSSEAcceleration"
+          data-testid="create-openai-ws-sse-acceleration"
+          :aria-label="t('admin.accounts.openai.wsSseAcceleration')"
+        />
+      </div>
+
       <!-- Anthropic API Key 自动透传开关 -->
       <div
         v-if="form.platform === 'anthropic' && accountCategory === 'apikey'"
@@ -3501,7 +3539,8 @@
 
     <!-- Step 2: OAuth Authorization -->
     <div v-else class="space-y-5">
-      <OpenAITwoFAImport v-if="isOpenAITwoFA" :import-credential="importTwoFACredential" @busy="twoFABusy = $event" />
+      <OpenAISiwcLogin v-if="isOpenAISiwc" :proxy-id="form.proxy_id" :import-credential="importSiwcCredential" @busy="twoFABusy = $event" />
+      <OpenAITwoFAImport v-else-if="isOpenAITwoFA" :import-credential="importTwoFACredential" @busy="twoFABusy = $event" />
       <OAuthAuthorizationFlow
         v-else
         ref="oauthFlowRef"
@@ -3586,7 +3625,7 @@
           {{ t('common.back') }}
         </button>
         <button
-          v-if="!isOpenAITwoFA && isManualInputMethod"
+          v-if="!isOpenAITwoFA && !isOpenAISiwc && isManualInputMethod"
           type="button"
           :disabled="!canExchangeCode"
           class="btn btn-primary"
@@ -3856,6 +3895,7 @@
 import { DEFAULT_ACCOUNT_COST_MULTIPLIER, isValidAccountCostMultiplier } from '@/utils/accountCost'
 
 import OpenAITwoFAImport from './OpenAITwoFAImport.vue'
+import OpenAISiwcLogin from './OpenAISiwcLogin.vue'
 import { createTokenGuardV2Account } from '@/api/admin/accountTokenGuardV2'
 import type { TokenGuardReloginAccount } from '@/api/admin/accountTokenGuard'
 import { ref, reactive, computed, watch } from 'vue'
@@ -3978,6 +4018,7 @@ const { t } = useI18n()
 const browserTimeZone = getBrowserTimeZone()
 
 const oauthStepTitle = computed(() => {
+  if (isOpenAISiwc.value) return 'SIWC · OpenClaw'
   if (isOpenAITwoFA.value) return t('tokenGuard.twoFA.title')
   if (form.platform === 'openai') return t('admin.accounts.oauth.openai.title')
   if (form.platform === 'gemini') return t('admin.accounts.oauth.gemini.title')
@@ -4025,6 +4066,8 @@ const apiKeyBaseUrlPlaceholder = computed(() => {
       return 'https://generativelanguage.googleapis.com'
     case 'grok':
       return 'https://api.x.ai/v1'
+    case 'typesafe':
+      return 'https://api.typesafe.ai'
     default:
       return 'https://api.anthropic.com'
   }
@@ -4047,6 +4090,8 @@ const apiKeyValuePlaceholder = computed(() => {
     case 'minimax':
     case 'opencode_go':
       return 'sk-...'
+    case 'typesafe':
+      return 'ts-...'
     default:
       return 'sk-ant-...'
   }
@@ -4130,11 +4175,14 @@ interface TempUnschedRuleForm {
 // State
 const step = ref(1)
 const openaiTwoFA = ref(false)
+const openaiSiwc = ref(false)
+const isOpenAISiwc = computed(() => form.platform === 'openai' && accountCategory.value === 'oauth-based' && openaiSiwc.value)
+const siwcCreatedAccounts = new Map<string, number>()
 const twoFABusy = ref(false)
 const isOpenAITwoFA = computed(() => form.platform === 'openai' && accountCategory.value === 'oauth-based' && openaiTwoFA.value)
 // 「降智后自动开启 BPS」：OpenAI OAuth / 2FA 添加时可选，账号建好后按这里的设置给每个新账号建一条质量运维规则。
 const autoBPS = useAccountAutoBPS()
-const autoBPSAvailable = computed(() => form.platform === 'openai' && accountCategory.value === 'oauth-based')
+const autoBPSAvailable = computed(() => form.platform === 'openai' && accountCategory.value === 'oauth-based' && !isOpenAISiwc.value)
 const submitting = ref(false)
 const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
@@ -4259,6 +4307,13 @@ function selectOpenCodeGoPlatform() {
   apiKeyBaseUrl.value = defaultCNBaseUrl('opencode_go', openCodeAccountMode.value, 'adaptive')
   resetAdaptiveBaseUrls('opencode_go', openCodeAccountMode.value)
   openCodeGoProtocolRules.value = cloneOpenCodeGoProtocolRules(defaultOpenCodeProtocolRules(openCodeAccountMode.value))
+}
+function selectTypeSafePlatform() {
+  form.platform = 'typesafe'
+  form.type = 'apikey'
+  accountCategory.value = 'apikey'
+  apiKeyBaseUrl.value = 'https://api.typesafe.ai'
+  allowedModels.value = ['jev-latest']
 }
 // 账号类型 / 协议变更时同步默认 base url。
 watch(openCodeAccountMode, (mode, previousMode) => {
@@ -4425,6 +4480,7 @@ const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
 const openAIImagesUrlToB64JsonEnabled = ref(false)
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
+const openaiOAuthWSSSEAcceleration = ref(false)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyEnabled = ref(false)
 const codexCLIOnlyAppServerEnabled = ref(false)
@@ -4834,12 +4890,20 @@ watch(
             ? 'https://generativelanguage.googleapis.com'
             : newPlatform === 'grok'
               ? 'https://api.x.ai/v1'
+              : newPlatform === 'typesafe'
+                ? 'https://api.typesafe.ai'
               : 'https://api.anthropic.com'
     }
     // Clear model-related settings
     allowedModels.value = []
     upstreamModelsPreviewed.value = false
     modelMappings.value = []
+    if (newPlatform === 'typesafe') {
+      accountCategory.value = 'apikey'
+      // Grok 等平台会把模式切到映射；TypeSafe 只用白名单写入 jev-latest。
+      modelRestrictionMode.value = 'whitelist'
+      allowedModels.value = ['jev-latest']
+    }
     // Antigravity: 默认使用映射模式并填充默认映射
     if (newPlatform === 'antigravity') {
       antigravityModelRestrictionMode.value = 'mapping'
@@ -4891,6 +4955,7 @@ watch(
       openaiFlattenNamespacesEnabled.value = false
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
       openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
+      openaiOAuthWSSSEAcceleration.value = false
       openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       codexCLIOnlyEnabled.value = false
       codexCLIOnlyAppServerEnabled.value = false
@@ -5287,6 +5352,8 @@ const resetForm = () => {
   step.value = 1
   openaiTwoFA.value = false
   autoBPS.reset()
+  openaiSiwc.value = false
+  siwcCreatedAccounts.clear()
   twoFABusy.value = false
   form.name = ''
   form.notes = ''
@@ -5353,6 +5420,7 @@ const resetForm = () => {
   openAIResponsesMode.value = 'auto'
   openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
+  openaiOAuthWSSSEAcceleration.value = false
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   codexCLIOnlyEnabled.value = false
   codexCLIOnlyAppServerEnabled.value = false
@@ -5429,6 +5497,11 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
   } else if (accountCategory.value === 'apikey') {
     extra.openai_apikey_responses_websockets_v2_mode = openaiAPIKeyResponsesWebSocketV2Mode.value
     extra.openai_apikey_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiAPIKeyResponsesWebSocketV2Mode.value)
+  }
+  if (form.type === 'oauth' && openaiOAuthWSSSEAcceleration.value) {
+    extra.openai_oauth_ws_sse_acceleration = true
+  } else {
+    delete extra.openai_oauth_ws_sse_acceleration
   }
   // 清理兼容旧键，统一改用分类型开关。
   delete extra.responses_websockets_v2_enabled
@@ -5628,7 +5701,7 @@ const handleVertexServiceAccountDrop = async (event: DragEvent) => {
 const handleSubmit = async () => {
   // For OAuth-based type, handle OAuth flow (goes to step 2)
   if (isOAuthFlow.value) {
-    if (!isGrokSSOInputMethod.value && !isOpenAITwoFA.value && !form.name.trim()) {
+    if (!isGrokSSOInputMethod.value && !isOpenAITwoFA.value && !isOpenAISiwc.value && !form.name.trim()) {
       appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
       return
     }
@@ -5784,6 +5857,8 @@ const handleSubmit = async () => {
         ? 'https://generativelanguage.googleapis.com'
         : form.platform === 'grok'
           ? 'https://api.x.ai/v1'
+          : form.platform === 'typesafe'
+            ? 'https://api.typesafe.ai'
           : 'https://api.anthropic.com'
 
   // Build credentials with optional model mapping
@@ -6447,6 +6522,31 @@ const isAgentIdentityImportContent = (content: string) => {
 }
 
 // Reuse Session import normalization and identity deduplication after 2FA login.
+const importSiwcCredential = async (credentials: Record<string, unknown>, login?: TokenGuardReloginAccount): Promise<void> => {
+  const identity = String(credentials.siwc_identity || '')
+  if (!identity || credentials.auth_flow !== 'chatgpt-token-sharing') throw new Error(t('tokenGuard.siwc.noGrant'))
+  let id = siwcCreatedAccounts.get(identity)
+  if (!id) {
+    const email = String(credentials.email || login?.email || 'SIWC')
+    const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+    const account = await adminAPI.accounts.create({
+      name: form.name.trim() ? `${form.name.trim()} (${email})` : `${email} · SIWC`,
+      platform: 'openai', type: 'oauth', notes: form.notes,
+      credentials: { ...credentials, ...(modelMapping ? { model_mapping: modelMapping } : {}) },
+      proxy_id: form.proxy_id, group_ids: form.group_ids, concurrency: form.concurrency,
+      priority: form.priority, rate_multiplier: form.rate_multiplier, load_factor: form.load_factor ?? undefined,
+      expires_at: form.expires_at, auto_pause_on_expired: autoPauseOnExpired.value
+    })
+    id = account.id; siwcCreatedAccounts.set(identity, id)
+  }
+  if (login) await createTokenGuardV2Account({
+    account_id: id, login_email: login.email, credential_mode: 'password_totp', engine: 'local_worker',
+    proxy_source: 'account', password: login.password, totp_secret: login.mfa_secret,
+    enabled: true, auto_relogin_enabled: true
+  })
+  emit('created')
+}
+
 const importTwoFACredential = async (credential: Record<string, unknown>, email: string, login: TokenGuardReloginAccount): Promise<'created' | 'skipped'> => {
   const credentialExtras = buildOpenAICodexImportCredentialExtras()
   if (credentialExtras === null) throw new Error('invalid_account_settings')

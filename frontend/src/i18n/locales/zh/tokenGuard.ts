@@ -1,4 +1,26 @@
 export default {
+ "siwc": {
+ "reauthorize": "SIWC 重新授权（保持原账号身份）",
+ "identityMismatch": "SIWC 身份不一致，请使用原账号重新授权",
+  "label": "ChatGPT 订阅共享额度",
+  "hint": "使用 OpenClaw SIWC 登录。与同邮箱 Codex OAuth 账号独立，可加入现有 OpenAI 分组。",
+  "auto": "本地自动登录（密码 + 2FA）",
+  "browser": "首次在浏览器确认",
+  "credentials": "邮箱、密码、2FA 密钥",
+  "secretsHint": "自动登录支持每行一条。浏览器模式可留空；填写一条凭据后，导入时会加密保存，用于后续本地 Go 自动重登。",
+  "start": "开始 SIWC 授权",
+  "openBrowser": "打开 ChatGPT 授权页",
+  "callbackHint": "确认共享额度后，复制地址栏完整的 localhost:8080/auth/callback 地址，即使页面显示连接失败。",
+  "exchange": "完成授权并导入",
+  "cancel": "取消并清除凭据",
+  "waiting": "正在等待授权完成…",
+  "manualRequired": "自动登录未完成，请在浏览器确认后粘贴完整回调；若会话失效，请重新开始。",
+  "noGrant": "未获得共享额度授权。请重新登录并允许 OpenClaw 使用额度。",
+  "saved": "已导入 {count} 个 SIWC 账号",
+  "failed": "SIWC 操作未完成，请重试",
+  "retrySave": "重试保存账号与重登配置",
+  "oneBrowser": "浏览器模式每次只支持一个账号"
+},
   "twoFA": {
   "title": "2FA 登录导入",
   "label": "邮箱、密码与 2FA 首次登录",

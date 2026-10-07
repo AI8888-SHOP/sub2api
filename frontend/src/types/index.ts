@@ -269,7 +269,7 @@ export interface PublicSettings {
   balance_low_notify_threshold: number
   channel_monitor_enabled: boolean
   /** Exclusive mode: v1 active probes or v2 passive aggregation. Default v2. */
-  channel_monitor_mode?: 'v1' | 'v2'
+  channel_monitor_mode?: 'v1' | 'v2' | 'v3'
   channel_monitor_default_interval_seconds: number
   /** When true, user monitor hides RPM/TPM so scale cannot be reverse-estimated. */
   channel_monitor_hide_throughput?: boolean
@@ -544,7 +544,7 @@ export interface PaginationConfig {
 
 // ==================== API Key & Group Types ====================
 
-export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'opencode_go' | 'composite'
+export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'opencode_go' | 'typesafe' | 'composite'
 
 export type VideoModelPrices = Record<string, Record<string, number>>
 
@@ -751,6 +751,7 @@ export interface ApiKey {
   created_at: string
   updated_at: string
   current_concurrency: number
+  concurrency_limit: number // 0 = no additional key limit
   group?: Group
   rate_limit_5h: number
   rate_limit_1d: number
@@ -766,8 +767,21 @@ export interface ApiKey {
   reset_7d_at: string | null
 }
 
+export interface ApiKeyConcurrencySnapshot {
+  queue_policy: {
+    max_waiting: number
+    timeout_seconds: number
+  }
+  items: Array<{
+    id: number
+    current_concurrency: number
+    current_waiting: number
+  }>
+}
+
 export interface CreateApiKeyRequest {
   name: string
+  concurrency_limit?: number // 0 = no additional key limit
   group_id?: number | null
   custom_key?: string // Optional custom API Key
   ip_whitelist?: string[]
@@ -781,6 +795,7 @@ export interface CreateApiKeyRequest {
 
 export interface UpdateApiKeyRequest {
   name?: string
+  concurrency_limit?: number // Omitted = no change, 0 = no additional key limit
   group_id?: number | null
   status?: 'active' | 'inactive'
   ip_whitelist?: string[]
@@ -928,7 +943,7 @@ export interface UpdateGroupRequest {
 
 // ==================== Account & Proxy Types ====================
 
-export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'opencode_go'
+export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'opencode_go' | 'typesafe'
 export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bedrock' | 'service_account'
 export type OAuthAddMethod = 'oauth' | 'setup-token'
 export type ProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
@@ -939,6 +954,8 @@ export interface ClaudeModel {
   type: string
   display_name: string
   created_at: string
+  supported_reasoning_levels?: string[]
+  default_reasoning_level?: string
 }
 
 export interface Proxy {
@@ -2546,7 +2563,6 @@ export interface QualityBPSPolicy {
   all_models: boolean
   models: string[]
   omit_unsupported_tools: boolean
-  ignore_images: boolean
   ignore_encrypted_content: boolean
   auto_disable_on_403: boolean
   auto_recover_on_403?: boolean
@@ -2563,13 +2579,18 @@ export interface QualityBPSPolicy {
 export interface QualityPolicy {
   judge?: QualityJudgeConfig
   expected_answer: string
-  action: 'remove_groups' | 'disable_scheduling' | 'enable_bps' | 'observe_only'
+  action: 'remove_groups' | 'remove_models' | 'disable_scheduling' | 'enable_bps' | 'observe_only'
   remove_group_ids: number[]
+  remove_models?: string[]
+  recovery_concurrency?: number
   auto_restore: boolean
   bps?: QualityBPSPolicy
 }
 
 export interface PelicanTestConfig {
+  quality_model_outcomes?: Record<string, 'passed' | 'failed' | 'inconclusive' | 'skipped'>
+  quality_model_actions?: Record<string, string>
+  trigger_source?: string
   quality?: QualityPolicy
   question_kind?: 'candy' | 'pelican' | 'state_probe'
   test_channel?: 'account' | 'bps'
@@ -2577,6 +2598,7 @@ export interface PelicanTestConfig {
   reasoning_effort: string
   parallel_count: number
   model_id?: string
+  model_ids?: string[]
 }
 
 export interface ScheduledTestPlan {

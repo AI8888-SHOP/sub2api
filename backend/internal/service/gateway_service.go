@@ -579,7 +579,10 @@ type AccountSelectionResult struct {
 	Account     *Account
 	Acquired    bool
 	ReleaseFunc func()
-	WaitPlan    *AccountWaitPlan // nil means no wait allowed
+	// AccountRequestID is the exact Redis member acquired for Acquired results.
+	// Live transfer moves it into the Live lease instead of double counting.
+	AccountRequestID string
+	WaitPlan         *AccountWaitPlan // nil means no wait allowed
 	// stickySessionHit 标记账号来自会话粘性绑定命中，供非高级调度路径回填决策标签。
 	stickySessionHit bool
 	// profitGate 携带本次选号真实生效的利润门（无门为 nil）。门安装在调度栈的
@@ -724,7 +727,7 @@ func (e *UpstreamFailoverError) IsCredentialFailure() bool {
 // and inference failures retain their existing scheduler-health behavior,
 // except an Excel BPS 429: it only cools the account's BPS route.
 func (e *UpstreamFailoverError) ShouldReportAccountScheduleFailure() bool {
-	if e == nil || e.Reason == ExcelBPSRateLimitedReason {
+	if e == nil || e.Reason == ExcelBPSRateLimitedReason || e.Reason == GrokUnknownForbiddenReason {
 		return false
 	}
 	return !e.IsCredentialFailure() || e.Scope == GatewayFailureScopeAccount
@@ -1354,6 +1357,7 @@ func (s *GatewayService) DoGrokNativeResponsesJSON(ctx context.Context, account 
 		proxyURL = account.Proxy.URL()
 	}
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+	s.rateLimitService.observeQualityResponse(upstreamReq.Context(), account, resp, err)
 	if err != nil {
 		return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway, Reason: GatewayFailureReason("grok_search_transport")}
 	}

@@ -489,9 +489,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		}
 	}
 
+	upstreamCtx, startDrain, releaseUpstreamCtx := openAIWSDrainContext(ctx)
+	defer releaseUpstreamCtx()
 	buildUpstreamRequest := func(requestBody []byte) (*http.Request, error) {
-		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
-		defer releaseUpstreamCtx()
 		var upstreamReq *http.Request
 		var buildErr error
 		if account.Platform == PlatformGrok {
@@ -572,6 +572,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			if IsOpenAIRPMError(err) {
 				return nil, err
 			}
+			if upstreamCtx.Err() != nil {
+				return nil, context.Cause(upstreamCtx)
+			}
 			if turn == 1 {
 				return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
 			}
@@ -620,7 +623,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			shouldFailover = s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody)
 			s.handleGrokAccountUpstreamError(withGrokTeamRateLimitModel(ctx, resolveGrokWSUpstreamModel(account, body, originalModel)), account, resp.StatusCode, resp.Header, respBody)
 			if shouldFailover && (turn == 1 || resp.StatusCode == http.StatusTooManyRequests) {
-				return nil, newOpenAIUpstreamFailoverError(resp.StatusCode, resp.Header, respBody, upstreamMsg, false)
+				return nil, newOpenAIUpstreamFailoverError(resp.StatusCode, resp.Header, respBody, upstreamMsg, false).WithGrokForbiddenPolicy(account)
 			}
 		} else if shouldFailover && (turn == 1 || resp.StatusCode == http.StatusTooManyRequests) {
 			return nil, s.handleFailoverErrorResponsePassthrough(ctx, resp, c, account, body, respBody)
@@ -632,11 +635,14 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		if writeErr := writeClientMessage(clientError); writeErr == nil {
 			markOpenAIWSClientVisibleFailure(c, "error", clientError)
 		}
+		if scopedErr := grokRequestScopedResponseError(account, resp.StatusCode, respBody, upstreamMsg); scopedErr != nil {
+			return nil, scopedErr
+		}
 		return nil, fmt.Errorf("upstream http bridge error: status=%d message=%s", resp.StatusCode, upstreamMsg)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	stopCancelBody := context.AfterFunc(ctx, func() { _ = resp.Body.Close() })
-	defer stopCancelBody()
+	// upstreamCtx cancellation interrupts the transport read. Keep Body.Close
+	// on this reader's goroutine: compressed bodies cannot close during Read.
 	if account.Platform == PlatformGrok {
 		s.updateGrokUsageFromResponse(withGrokTeamRateLimitModel(ctx, resolveGrokWSUpstreamModel(account, body, originalModel)), account, resp.Header, resp.StatusCode)
 	}
@@ -847,7 +853,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 				}
 			}
 			requestScopedCapacity := isOpenAIUpstreamCapacityShedEvent(upstreamMessage)
-			if account.Platform == PlatformGrok && eventType == "error" {
+			if account.Platform == PlatformGrok && (eventType == "error" || eventType == "response.failed") {
 				// SSE error events do not carry an HTTP status. The local status
 				// mapper therefore defaults unknown xAI codes (for example
 				// new_sensitive) to 502; classify the body as a request-scoped
@@ -863,7 +869,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			// even when only non-semantic heartbeats were delivered.
 			if !clientDisconnected && !wroteDownstream && shouldFailover && (turn == 1 || statusCode == http.StatusTooManyRequests) {
 				if account.Platform == PlatformGrok {
-					return nil, newOpenAIUpstreamFailoverError(statusCode, resp.Header, upstreamMessage, errMessage, false)
+					return nil, newOpenAIUpstreamFailoverError(statusCode, resp.Header, upstreamMessage, errMessage, false).WithGrokForbiddenPolicy(account)
 				}
 				return nil, s.newOpenAIStreamFailoverErrorWithModel(c, account, true, resp.Header.Get("x-request-id"), upstreamMessage, errMessage, mappedModel, resp.Header)
 			}
@@ -878,6 +884,11 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			}
 			if eventType == "error" && !officialOpenAIResponses {
 				upstreamEventErr = errors.New(errMessage)
+				if account.IsGrok() && isGrokContentPolicyRejection(http.StatusForbidden, upstreamMessage) {
+					upstreamEventErr = &grokContentPolicyError{message: errMessage}
+				} else if scopedErr := grokRequestScopedResponseError(account, statusCode, upstreamMessage, errMessage); scopedErr != nil {
+					upstreamEventErr = scopedErr
+				}
 			} else if eventType == "error" {
 				bareErrorPending = true
 				bareErrorPayload = append(bareErrorPayload[:0], upstreamMessage...)
@@ -932,6 +943,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 					if err := writeClientMessage(message); err != nil {
 						if isOpenAIWSClientDisconnectError(err) {
 							clientDisconnected = true
+							startDrain()
 							closeStatus, closeReason := summarizeOpenAIWSReadCloseError(err)
 							logOpenAIWSModeInfo(
 								"ingress_ws_http_bridge_client_disconnected_drain account_id=%d turn=%d close_status=%s close_reason=%s",
@@ -960,6 +972,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 
 		if upstreamEventErr != nil {
 			return resultWithUsage(), upstreamEventErr
+		}
+		if account.IsGrok() && eventType == "response.failed" && isGrokContentPolicyRejection(http.StatusForbidden, upstreamMessage) {
+			return resultWithUsage(), &grokContentPolicyError{message: extractOpenAISSEErrorMessage(upstreamMessage)}
 		}
 		if isOpenAIWSTerminalEvent(eventType) && !bareErrorPending {
 			if eventType == "response.failed" {
@@ -1001,6 +1016,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	}
 	if err := scanner.Err(); err != nil {
 		streamErr := fmt.Errorf("read upstream http bridge stream: %w", err)
+		if upstreamCtx.Err() != nil {
+			return resultWithUsage(), context.Cause(upstreamCtx)
+		}
 		if turn == 1 && !clientDisconnected && !wroteDownstream {
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, streamErr, true)
 		}

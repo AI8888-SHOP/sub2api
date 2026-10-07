@@ -27,29 +27,6 @@ import (
 var excelBPSReplay basispoints.ReplayCache
 var excelBPSCatalog basispoints.CatalogCache
 
-type excelBPSProtocolContextKey struct{}
-
-func withExcelBPSProtocol(ctx context.Context, protocol string) context.Context {
-	if protocol != ExcelBPSProtocolGoogleSheets {
-		protocol = ExcelBPSProtocolExcel
-	}
-	return context.WithValue(ctx, excelBPSProtocolContextKey{}, protocol)
-}
-
-func excelBPSProtocolFromContext(ctx context.Context) string {
-	if protocol, ok := ctx.Value(excelBPSProtocolContextKey{}).(string); ok && protocol == ExcelBPSProtocolGoogleSheets {
-		return protocol
-	}
-	return ExcelBPSProtocolExcel
-}
-
-func excelBPSClientHeaders(protocol string) (product, profile string) {
-	if protocol == ExcelBPSProtocolGoogleSheets {
-		return "basispoints-google-sheets-plugin", "google_sheets"
-	}
-	return "basispoints-excel-plugin", "excel"
-}
-
 // BPS uses the account's OAuth credentials, so authentication failures must
 // update the same scheduling state as ordinary OpenAI requests. Keep arbitrary
 // BPS error text (which may echo request data) out of persisted account reasons.
@@ -137,6 +114,9 @@ func (s *OpenAIGatewayService) excelBPSImageRelayForSettings(settings ExcelBPSIm
 			dataDir = "./data"
 		}
 		s.excelBPSImages, err = basispoints.NewImageRelay(settings.BaseURL, filepath.Join(dataDir, "bps-images"))
+		if err == nil && s.settingService.Serverless != nil {
+			s.excelBPSImages.SetURLDecorator(s.settingService.Serverless.ImageOwnerURL)
+		}
 	}
 	if err == nil {
 		err = s.excelBPSImages.Configure(settings.BaseURL, settings.Limits)
@@ -179,13 +159,12 @@ func newExcelBPSRequestTo(ctx context.Context, targetURL, accept string, body []
 	if err != nil {
 		return nil, err
 	}
-	product, profile := excelBPSClientHeaders(excelBPSProtocolFromContext(ctx))
 	req.Header = http.Header{
 		"Authorization": {"Bearer " + token}, "Chatgpt-Account-Id": {accountID}, "X-Openai-Account-Id": {accountID},
 		"X-Basispoints-Auth-Mode": {"chatgpt"}, "Content-Type": {"application/json"}, "Accept": {accept},
 		"Origin": {"https://bps.openai.com"}, "User-Agent": {"Mozilla/5.0"},
-		"X-Openai-Internal-Basispoints-Client-Product":       {product},
-		"X-Openai-Internal-Basispoints-Client-Agent-Profile": {profile},
+		"X-Openai-Internal-Basispoints-Client-Product":       {"basispoints-excel-plugin"},
+		"X-Openai-Internal-Basispoints-Client-Agent-Profile": {"excel"},
 	}
 	return req, nil
 }
@@ -193,7 +172,6 @@ func newExcelBPSRequestTo(ctx context.Context, targetURL, accept string, body []
 // BPS deliberately bypasses Codex ticket/cookie injection and OAuth plugins:
 // only the selected account's bearer and ChatGPT account ID belong on this host.
 func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Context, account *Account, body []byte, start time.Time) (forwardResult *OpenAIForwardResult, forwardErr error) {
-	ctx = withExcelBPSProtocol(ctx, account.ExcelBPSProtocol())
 	var compactUsage OpenAIUsage
 	var compactID string
 	originalImagePolicyModel := gjson.GetBytes(body, "model").String()
@@ -295,12 +273,6 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			return clientCanceled()
 		}
 		return fail(503, "basispoints_image_settings_unavailable", "Excel BPS image settings are unavailable")
-	}
-	if !imageSettings.Enabled && account.IsExcelBPSIgnoreImagesEnabled() {
-		body, err = basispoints.StripInputImages(body)
-		if err != nil {
-			return fail(400, "basispoints_request_invalid", err.Error())
-		}
 	}
 	if account.IsExcelBPSIgnoreEncryptedContentEnabled() {
 		body, err = basispoints.StripEncryptedContent(body)
@@ -558,6 +530,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			c.Set("excel_bps_upstream_attempt", c.GetInt("excel_bps_upstream_attempt")+1)
 			// Do not re-enter proxy acquisition or transport retries after sending.
 			resp, err = s.httpUpstream.Do(retryReq, proxyURL, account.ID, account.Concurrency)
+			s.rateLimitService.observeQualityResponse(retryReq.Context(), account, resp, err)
 			SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(sent).Milliseconds())
 			if err != nil {
 				if isExcelBPSClientCancellation(c, err) {
@@ -651,6 +624,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			return nil, err
 		}
 		repairResp, err := s.httpUpstream.Do(repairReq, proxyURL, account.ID, account.Concurrency)
+		s.rateLimitService.observeQualityResponse(repairReq.Context(), account, repairResp, err)
 		if err != nil {
 			if repairCtx.Err() != nil {
 				return nil, repairCtx.Err()
@@ -686,6 +660,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			return nil, err
 		}
 		repaired, err := s.httpUpstream.Do(retry, proxyURL, account.ID, account.Concurrency)
+		s.rateLimitService.observeQualityResponse(retry.Context(), account, repaired, err)
 		if err != nil {
 			return nil, fmt.Errorf("excel BPS tool correction transport failed")
 		}
@@ -755,6 +730,9 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			}
 			switch kind {
 			case "response.completed", "response.failed", "response.cancelled", "response.incomplete", "error":
+				if kind != "response.completed" {
+					s.rateLimitService.observeQualityStatus(ctx, account, openAIStreamFailureStatus(payload, extractOpenAISSEErrorMessage(payload)))
+				}
 				if kind == "response.completed" && lease != nil {
 					lease.ReportSuccess()
 				}
@@ -809,6 +787,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		recordExcelBPSTransportFailure(ctx, c, account, scope, proxyURL, err, "stream", c.GetInt("excel_bps_upstream_attempt"), false)
 		MarkOpsStreamError(c, "basispoints_stream_incomplete", "Excel BPS stream ended before completion", http.StatusBadGateway)
+		s.rateLimitService.observeQualityStatus(ctx, account, http.StatusBadGateway)
 		MarkResponseCommitted(c)
 		if stream {
 			_, _ = c.Writer.WriteString("event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"type\":\"server_error\",\"code\":\"basispoints_stream_incomplete\",\"message\":\"Upstream stream ended before completion\"}}}\n\n")

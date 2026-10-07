@@ -17,10 +17,13 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
 
 type Account struct {
+	// InitialQualityPlan is internal create-only state, never imported or exported.
+	InitialQualityPlan      *ScheduledTestPlan `json:"-"`
 	ID                      int64
 	Name                    string
 	Notes                   *string
@@ -240,6 +243,9 @@ func (a *Account) IsSchedulable() bool {
 // 手动 Schedulable 开关:spark 影子拥有独立 spark 配额窗口,母账号 global 429(走 RateLimitResetAt)
 // 不应连坐 spark(否则重新耦合影子架构本应解耦的两条 429 道)。nil receiver 返回 false。
 func (a *Account) IsCredentialUsableForShadow() bool {
+	if a.IsOpenAISiwc() {
+		return false
+	}
 	if a == nil || !a.IsActive() {
 		return false
 	}
@@ -294,8 +300,25 @@ func (a *Account) IsGrok() bool {
 	return a.Platform == PlatformGrok
 }
 
+func (a *Account) IsTypeSafe() bool {
+	return a != nil && a.Platform == PlatformTypeSafe
+}
+
 func (a *Account) IsGrokOAuth() bool {
 	return a.IsGrok() && a.Type == AccountTypeOAuth
+}
+
+const grokSkipForbiddenPauseExtraKey = "grok_skip_forbidden_pause"
+
+// SkipGrokForbiddenPause reports the deployed per-account opt-out for pausing
+// a Grok account after an unknown inference 403. A missing or non-boolean value
+// preserves the legacy pause. Explicit entitlement and suspension markers are
+// protected by the caller even when this returns true.
+func (a *Account) SkipGrokForbiddenPause() bool {
+	if a == nil || !a.IsGrok() {
+		return false
+	}
+	return a.getExtraBool(grokSkipForbiddenPauseExtraKey)
 }
 
 // IsKimi / IsZhipu / IsDeepseek 标识国产 OpenAI 兼容供应商账号。
@@ -912,6 +935,29 @@ func resolveRequestedModelInMapping(mapping map[string]string, requestedModel st
 // （isDeepseekServableModel）——未知模型名透传上游只会得到 404/400，并误触发
 // per-(账号,模型) 30 分钟冷却；带 [1m] 上下文后缀的写法先归一化再比对。
 func (a *Account) IsModelSupported(requestedModel string) bool {
+	if a.IsOpenAISiwc() {
+		if !a.HasSiwcSharing() {
+			return false
+		}
+		mapping := a.GetModelMapping()
+		return len(mapping) == 0 || mappingSupportsRequestedModel(mapping, requestedModel)
+	}
+	if blocked, _ := a.Extra["astra_model_disabled"].(bool); blocked {
+		if empty, _ := a.Extra["astra_model_empty_mapping"].(bool); empty {
+			return false
+		}
+		if strings.EqualFold(strings.TrimSpace(requestedModel), "gpt-6-astra") || strings.EqualFold(a.GetMappedModel(requestedModel), "gpt-6-astra") {
+			return false
+		}
+		if keys, ok := a.Extra["astra_model_blocked_keys"].([]any); ok {
+			for _, key := range keys {
+				if k, ok := key.(string); ok && (strings.EqualFold(k, requestedModel) || (strings.HasSuffix(k, "*") && strings.HasPrefix(requestedModel, strings.TrimSuffix(k, "*")))) {
+					return false
+				}
+			}
+		}
+	}
+
 	// 透传模式仅替换认证、模型语义完全交由上游决定，因此放行所有模型。
 	// 该短路必须在 model_mapping 判定之前：账号从"白名单模式"切换到透传后，
 	// credentials 里常残留旧的非空 model_mapping，若不在此放行，透传账号会被
@@ -1049,6 +1095,10 @@ func (a *Account) GetBaseURL() string {
 	}
 	baseURL := a.GetCredential("base_url")
 	if baseURL == "" {
+		// TypeSafe keys must never fall back to the Anthropic host.
+		if a.Platform == PlatformTypeSafe {
+			return typesafe.DefaultBaseURL
+		}
 		return "https://api.anthropic.com"
 	}
 	if a.Platform == PlatformAntigravity {
@@ -1068,6 +1118,28 @@ func (a *Account) GetGeminiBaseURL(defaultBaseURL string) string {
 		return strings.TrimRight(baseURL, "/") + "/antigravity"
 	}
 	return baseURL
+}
+
+func (a *Account) GetTypeSafeBaseURL() string {
+	if a == nil || !a.IsTypeSafe() || a.Type != AccountTypeAPIKey {
+		return ""
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(a.GetCredential("base_url")), "/")
+	// The System One path already carries /v1; accept a base URL pasted with it.
+	if len(baseURL) >= 3 && strings.EqualFold(baseURL[len(baseURL)-3:], "/v1") {
+		baseURL = strings.TrimRight(baseURL[:len(baseURL)-3], "/")
+	}
+	if baseURL == "" {
+		return typesafe.DefaultBaseURL
+	}
+	return baseURL
+}
+
+func (a *Account) GetTypeSafeAPIKey() string {
+	if a == nil || !a.IsTypeSafe() || a.Type != AccountTypeAPIKey {
+		return ""
+	}
+	return strings.TrimSpace(a.GetCredential("api_key"))
 }
 
 func (a *Account) GetExtraString(key string) string {
@@ -1385,16 +1457,19 @@ func (a *Account) IsOpenAIOAuth() bool {
 // inference protocol. Setup tokens share that forwarding contract but do not
 // participate in the refreshable OAuth credential lifecycle.
 func (a *Account) IsOpenAIOAuthLike() bool {
-	return a != nil && a.IsOpenAI() && (a.Type == AccountTypeOAuth || a.Type == AccountTypeSetupToken)
+	return a != nil && !a.IsOpenAISiwc() && a.IsOpenAI() && (a.Type == AccountTypeOAuth || a.Type == AccountTypeSetupToken)
 }
 
 // UsesOpenAICodexProtocol preserves legacy OpenAI gateway OAuth routing for
 // accounts whose platform is implicit, while adding OpenAI SetupToken.
 func (a *Account) UsesOpenAICodexProtocol() bool {
-	return a != nil && (a.Type == AccountTypeOAuth || a.IsOpenAIOAuthLike())
+	return a != nil && !a.IsOpenAISiwc() && (a.Type == AccountTypeOAuth || a.IsOpenAIOAuthLike())
 }
 
 func (a *Account) IsOpenAIChatGPTSubscription() bool {
+	if a.IsOpenAISiwc() {
+		return false
+	}
 	if !a.IsOpenAIOAuth() {
 		return false
 	}
@@ -1894,6 +1969,9 @@ func (a *Account) GetOpenAISessionID() string {
 }
 
 func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapability) bool {
+	if a.IsOpenAISiwc() {
+		return a.HasSiwcSharing() && (capability == "" || capability == OpenAIEndpointCapabilityResponses || capability == OpenAIEndpointCapabilityChatCompletions)
+	}
 	if a == nil {
 		return false
 	}
@@ -2191,17 +2269,12 @@ func (a *Account) IsOpenAIPassthroughEnabled() bool {
 	return false
 }
 
-const (
-	ExcelBPSProtocolKey          = "openai_excel_bps_protocol"
-	ExcelBPSProtocolExcel        = "excel"
-	ExcelBPSProtocolGoogleSheets = "google_sheets"
-)
-
-// IsExcelBPSEnabled routes an existing ChatGPT OAuth account to the BPS gateway.
+// IsExcelBPSEnabled routes an existing ChatGPT OAuth account to the Excel gateway.
 // Credentials and refresh remain on the original account; no sidecar is involved.
-// The historical name is retained for API compatibility with the existing
-// scheduler and account settings.
 func (a *Account) IsExcelBPSEnabled() bool {
+	if a.IsOpenAISiwc() {
+		return false
+	}
 	if a == nil || a.Platform != PlatformOpenAI || a.Type != AccountTypeOAuth || a.IsShadow() || a.IsOpenAIAgentIdentity() || a.IsOpenAIPersonalAccessToken() {
 		return false
 	}
@@ -2209,34 +2282,6 @@ func (a *Account) IsExcelBPSEnabled() bool {
 		return false
 	}
 	enabled, _ := a.Extra["openai_excel_bps"].(bool)
-	return enabled
-}
-
-// ExcelBPSProtocol selects the BPS client profile. Existing accounts default
-// to Excel so adding the Google Sheets profile is fully backward compatible.
-func (a *Account) ExcelBPSProtocol() string {
-	if a == nil || a.Extra == nil {
-		return ExcelBPSProtocolExcel
-	}
-	if protocol, ok := a.Extra[ExcelBPSProtocolKey].(string); ok && protocol == ExcelBPSProtocolGoogleSheets {
-		return ExcelBPSProtocolGoogleSheets
-	}
-	return ExcelBPSProtocolExcel
-}
-
-func (a *Account) IsGoogleSheetsBPS() bool {
-	return a.IsExcelBPSEnabled() && a.ExcelBPSProtocol() == ExcelBPSProtocolGoogleSheets
-}
-
-const ExcelBPSIgnoreImagesKey = "openai_excel_bps_ignore_images"
-
-// IsExcelBPSIgnoreImagesEnabled opts into text-only forwarding when global BPS
-// image support is disabled. The forwarding path checks that global setting.
-func (a *Account) IsExcelBPSIgnoreImagesEnabled() bool {
-	if !a.IsExcelBPSEnabled() {
-		return false
-	}
-	enabled, _ := a.Extra[ExcelBPSIgnoreImagesKey].(bool)
 	return enabled
 }
 
@@ -2529,6 +2574,9 @@ func (a *Account) ResolveOpenAIResponsesWebSocketV2Mode(defaultMode string) stri
 // IsOpenAIWSForceHTTPEnabled 返回账号级"强制 HTTP"开关。
 // 字段：accounts.extra.openai_ws_force_http。
 func (a *Account) IsOpenAIWSForceHTTPEnabled() bool {
+	if a.IsOpenAISiwc() {
+		return true
+	}
 	if a.IsCopilotSDKEnabled() || a.isExcelBPSAllModelsEnabled() {
 		return true
 	}

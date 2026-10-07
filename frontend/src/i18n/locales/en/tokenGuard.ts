@@ -1,4 +1,26 @@
 export default {
+ "siwc": {
+ "reauthorize": "Reauthorize SIWC (same account identity)",
+ "identityMismatch": "SIWC identity mismatch; reauthorize the original account",
+  "label": "ChatGPT shared subscription allowance",
+  "hint": "Sign in using OpenClaw SIWC. Separate from Codex OAuth with the same email; supports existing OpenAI groups.",
+  "auto": "Local automatic login (password + 2FA)",
+  "browser": "First-time browser confirmation",
+  "credentials": "Email, password and TOTP secret",
+  "secretsHint": "Automatic mode accepts one account per line. Browser mode allows an empty field; provide one account to encrypt credentials for local Go automatic re-login.",
+  "start": "Start SIWC authorization",
+  "openBrowser": "Open ChatGPT authorization",
+  "callbackHint": "Approve allowance sharing, then copy the complete localhost:8080/auth/callback address even if the page cannot connect.",
+  "exchange": "Finish authorization and import",
+  "cancel": "Cancel and clear credentials",
+  "waiting": "Waiting for authorization…",
+  "manualRequired": "Automatic login did not finish. Confirm in the browser and paste the full callback; start again if expired.",
+  "noGrant": "Allowance sharing was not granted. Sign in again and allow OpenClaw to use the allowance.",
+  "saved": "Imported {count} SIWC accounts",
+  "failed": "SIWC operation failed; please retry",
+  "retrySave": "Retry saving account and re-login configuration",
+  "oneBrowser": "Browser mode supports one account at a time"
+},
   "twoFA": {
   "title": "2FA login and import",
   "label": "Initial login with email, password and 2FA",

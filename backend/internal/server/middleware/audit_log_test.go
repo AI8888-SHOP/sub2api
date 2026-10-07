@@ -152,6 +152,37 @@ func TestPasskeyLoginAuditUsesCanonicalLoginActionAndOmitsCredentialBody(t *test
 	require.Contains(t, auditBodyOmittedRoutes, route)
 }
 
+func TestSIWCLoginAndCallbackBodiesAreOmittedFromAudit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repository := &auditCaptureRepository{}
+	auditService := service.NewAuditLogService(repository, nil)
+	auditService.Start()
+	router := gin.New()
+	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(auditService)))
+	for _, path := range []string{"/api/v1/admin/openai/siwc/sessions", "/api/v1/admin/openai/siwc/exchange"} {
+		router.POST(path, func(c *gin.Context) {
+			var body map[string]any
+			require.NoError(t, c.ShouldBindJSON(&body))
+			require.NotEmpty(t, body)
+			c.Status(http.StatusOK)
+		})
+		request := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(`{"login":{"email":"private@example.test","password":"audit-canary-password","totp_secret":"audit-canary-totp"},"callback_url":"http://localhost:8080/auth/callback?code=audit-canary-code"}`))
+		request.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		require.Equal(t, http.StatusOK, recorder.Code)
+	}
+	auditService.Stop()
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	require.Len(t, repository.logs, 2)
+	for _, entry := range repository.logs {
+		require.Equal(t, "<credential-bearing body omitted>", entry.RequestBody)
+		require.NotContains(t, entry.RequestBody, "audit-canary")
+		require.NotContains(t, entry.RequestBody, "private@example.test")
+	}
+}
+
 // Ollama 会话保存的请求体整体就是浏览器 Cookie 明文，键级脱敏清单曾漏掉裸键
 // "session"，必须走整体不入库路径，防止会话凭证长期留存在 audit_logs。
 func TestOllamaCloudUsageSessionRouteOmitsAuditBody(t *testing.T) {

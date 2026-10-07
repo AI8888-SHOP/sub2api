@@ -187,7 +187,8 @@ func openAITurnRouteFingerprint(a *Account) [32]byte {
 	routeExtra := make(map[string]any)
 	for _, key := range []string{
 		codexFingerprintSeedExtraKey, codexFingerprintModeExtraKey,
-		"openai_passthrough", "openai_oauth_passthrough", "openai_excel_bps", "openai_excel_bps_protocol", "openai_excel_bps_models", "openai_excel_bps_mihomo",
+		"openai_passthrough", "openai_oauth_passthrough", "openai_excel_bps", "openai_excel_bps_models", "openai_excel_bps_mihomo",
+		"openai_prism_browser", PrismBrowserModelsKey,
 		"openai_oauth_responses_websockets_v2_mode", "openai_apikey_responses_websockets_v2_mode",
 		"openai_oauth_responses_websockets_v2_enabled", "openai_apikey_responses_websockets_v2_enabled",
 		"responses_websockets_v2_enabled", "openai_ws_enabled", "openai_ws_force_http",
@@ -258,6 +259,11 @@ func (s *OpenAIGatewayService) latestOpenAITurnAccountForGroup(
 	latest := selected
 	var parent *Account
 	authoritativeRead := false
+	if ttl := s.openAITurnAdmissionCacheTTL(); ttl > 0 {
+		if cached, cachedParent, ok := s.openAITurnAdmissionCache.load(selected.ID, ttl); ok {
+			latest, parent, authoritativeRead = cached, cachedParent, true
+		}
+	}
 	if s.accountRepo != nil {
 		reader, ok := s.accountRepo.(OpenAITurnAdmissionReader)
 		if !ok {
@@ -271,7 +277,7 @@ func (s *OpenAIGatewayService) latestOpenAITurnAccountForGroup(
 			// fail-closed.
 			reader = nil
 		}
-		if reader != nil {
+		if reader != nil && !authoritativeRead {
 			authoritativeRead = true
 			readCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 			var err error
@@ -279,6 +285,9 @@ func (s *OpenAIGatewayService) latestOpenAITurnAccountForGroup(
 			cancel()
 			if err != nil || latest == nil || latest.ID != selected.ID {
 				return nil, denyOpenAITurn("latest_state_unavailable")
+			}
+			if s.openAITurnAdmissionCacheTTL() > 0 {
+				s.openAITurnAdmissionCache.store(latest, parent)
 			}
 		}
 	} else if s.requireLatestTurnAdmission {
@@ -326,15 +335,18 @@ func (s *OpenAIGatewayService) admitOpenAITurn(ctx context.Context, c *gin.Conte
 
 // admitOpenAITurnForGroup is used by connection-pool callbacks, which run
 // after the request's gin context has been reduced to a plain context.  The
-// group is carried explicitly so a stale account cannot still complete a
-// new handshake after it has been removed from the API key's group.
+// group scope is captured up front with openAITurnAdmissionGroupFromContext,
+// so a stale account cannot still complete a new handshake after it has been
+// removed from the API key's group, while keyless account tests stay unscoped
+// exactly as on the HTTP path.
 func (s *OpenAIGatewayService) admitOpenAITurnForGroup(
 	ctx context.Context,
 	groupID int64,
+	enforceGroup bool,
 	selected *Account,
 	outboundModel string,
 ) (*Account, error) {
-	return s.admitOpenAITurnWithGroup(ctx, selected, outboundModel, groupID, true)
+	return s.admitOpenAITurnWithGroup(ctx, selected, outboundModel, groupID, enforceGroup)
 }
 
 func (s *OpenAIGatewayService) admitOpenAITurnWithGroup(
@@ -393,6 +405,9 @@ func (s *OpenAIGatewayService) bindOpenAIWSHandshake(account *Account, model str
 }
 
 func (s *OpenAIGatewayService) checkOpenAIWSBinding(account *Account, model string, b *openAIWSTurnBinding) error {
+	if account.isPrismBrowserUpstreamModelEnabled(model) {
+		return denyOpenAITurn("prism_requires_http")
+	}
 	if account.isExcelBPSUpstreamModelEnabled(model) {
 		return denyOpenAITurn("excel_bps_requires_http")
 	}

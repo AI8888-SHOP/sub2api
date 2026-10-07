@@ -94,6 +94,12 @@ export default {
       schedulableEnabled: '调度已开启',
       schedulableDisabled: '调度已关闭',
       failedToToggleSchedulable: '切换调度状态失败',
+      priorityQuick: {
+        raise: '提高优先级（数值 -1）',
+        lower: '降低优先级（数值 +1）',
+        editHint: '点击直接输入；数值越小越优先',
+        failed: '更新优先级失败'
+      },
       groupCountTotal: '共 {count} 个分组',
       columns: {
         name: '名称',
@@ -344,6 +350,7 @@ export default {
         deepseek: 'DeepSeek',
         minimax: 'MiniMax',
         opencode_go: 'OpenCode',
+        typesafe: 'TypeSafe / Jev',
       },
       cnProviders: {
         accountMode: {
@@ -768,18 +775,17 @@ export default {
       // OpenAI specific hints
       openai: {
         baseUrlHint: '留空使用官方 OpenAI API',
+        prismBrowser: '自动使用 Prism 浏览器协议',
+        prismBrowserDesc: '使用此 OpenAI OAuth 账号接入服务器管理的 Prism 适配器，无需另填 Prism 凭据。支持以下四个模型的文本请求，以及 6.1 Sol 的客户端函数和自定义工具。',
+        prismBrowserModels: '勾选使用 Prism 的模型',
+        prismBrowserModelsHint: '按账号映射后的模型名称匹配。仅勾选模型走 Prism；未选模型保留原 Codex / Excel 路由。全部取消时不使用 Prism。模型权限仍以上游账号为准。',
+        prismBrowserManagedEndpoint: '所选模型使用 HTTP/SSE。工具请求需同步升级服务器适配器；联网搜索、图片生成等托管工具不受支持。',
+        prismBrowserConcurrencyHint: 'Prism 另受适配器并发限制，其请求不计入本档升降级统计。',
         apiKeyHint: '您的 OpenAI API Key',
         oauthPassthrough: '自动透传（仅替换认证）',
         excelBPS: 'Excel / BPS 协议',
-        excelBPSProtocol: 'BPS 客户端协议',
-        excelBPSProtocolExcel: 'Excel',
-        excelBPSProtocolExcelDesc: '使用 Excel 插件的 BPS 客户端标识。现有账号默认使用此协议。',
-        excelBPSProtocolGoogleSheets: 'Google Sheets',
-        excelBPSProtocolGoogleSheetsDesc: '使用 Google Sheets 插件的 BPS 客户端标识。需要上游支持该协议。',
         excelBPSOmitUnsupportedTools: '保持 BPS，省略不支持的托管工具',
         excelBPSOmitUnsupportedToolsDesc: '默认关闭：请求声明实时联网搜索（external_web_access=true）、高搜索上下文或图片生成时走原生 Codex 通道，即使 tool_choice=auto 且本轮尚未调用。开启后保持 BPS，省略适配层不支持的托管工具，并向模型说明能力不可用；搜索和图片生成不会因此获得支持，客户端函数工具不受影响。强制工具选择返回 400；tool_choice=none 不触发工具回退。回退原因记录在响应头及 excel_bps.native_fallback 诊断日志中。',
-        excelBPSIgnoreImages: '图片支持关闭时忽略图片输入',
-        excelBPSIgnoreImagesDesc: '默认关闭。仅在系统设置中的 Excel / BPS 图片支持关闭时生效：转发前将当前及历史消息、工具结果中的每张图片替换为不可用提示，保留文本和工具调用关系，避免历史截图反复报错导致会话无法继续。图片混合文本的结果也会明确告知模型无法看到图片，图片支持关闭期间不要重试 view_image 或其他读图工具。重新开启图片支持后恢复正常图片处理。',
         excelBPSCacheCreationAsInput: '创建缓存按普通输入计费',
         excelBPSMihomo: 'BPS 会话代理（谨慎开启）',
         excelBPSProxySource: '出口来源',
@@ -1034,6 +1040,7 @@ export default {
       enterCustomModelName: '输入自定义模型名称',
       addModel: '填入',
       modelExists: '该模型已存在',
+      modelMappingConflict: '该模型已配置映射 {from} → {to}，请在模型映射中修改或删除后再添加白名单模型',
       modelCount: '{count} 个模型',
       poolMode: '池模式',
       poolModeHint: '上游为账号池时启用，错误不标记本地账号状态',
@@ -1090,6 +1097,10 @@ export default {
           cli: 'Grok Build CLI',
           official: '官方 API'
         }
+      },
+      grokSkipForbiddenPause: {
+        title: '未分类 Grok 403 后保持调度',
+        hint: '默认关闭。开启后，未分类的推理 403 不再触发默认 30 分钟全账号暂停或健康惩罚，每次请求最多尝试一个备用账号。明确的凭据撤销、封禁、资格拒绝、内容、计费/配额处理及管理员规则仍然生效。'
       },
       grokClientToolCache: {
         title: '客户端工具缓存（可能改变自动工具选择）',
@@ -1757,11 +1768,16 @@ export default {
         promptLabel: '测试消息',
         promptHint: '同一题目会原样发给每个并行任务。',
         model: '模型',
-        modelHint: '默认使用 gpt-6-astra，可按账号实际支持情况修改。',
+        modelHint: '默认使用 {model}，可按账号实际支持情况修改。',
         reasoning: '思考强度',
         reasoningLow: '低',
         reasoningMedium: '中',
         reasoningHigh: '高',
+        reasoningNone: '无',
+        reasoningMinimal: '最低',
+        reasoningXHigh: '超高',
+        reasoningMax: '最大',
+        reasoningUltra: 'Ultra',
         parallel: '并行数',
         parallelHint: '同一账号最多同时生成 8 份结果。',
         results: '新建测试',

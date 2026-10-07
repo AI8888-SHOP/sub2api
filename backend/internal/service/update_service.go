@@ -33,7 +33,7 @@ const (
 	// Releases are maintained on the owner-controlled production fork. Keep the
 	// updater independent from the upstream repository so production installs
 	// see our release stream and can update to our fork's assets.
-	githubRepo = "AI8888-SHOP/sub2api"
+	githubRepo = "ranxi2001/sub2api"
 
 	// Security: allowed download domains for updates
 	allowedDownloadHost = "github.com"

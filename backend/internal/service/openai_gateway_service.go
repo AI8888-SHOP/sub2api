@@ -241,7 +241,10 @@ type OpenAIForwardResult struct {
 	// UpstreamHeaders 是直接上游的响应头，用于按账户配置解析上游请求标识。
 	UpstreamHeaders http.Header
 	Usage           OpenAIUsage
-	Model           string // 原始模型（用于响应和日志显示）
+	// UsageUnavailable prevents a protocol without upstream usage from being
+	// recorded or billed as if it reported an authoritative zero-token result.
+	UsageUnavailable bool
+	Model            string // 原始模型（用于响应和日志显示）
 	// BillingModel is the model used for cost calculation.
 	// When non-empty, CalculateCost uses this instead of Model.
 	// This is set by the Anthropic Messages conversion path where
@@ -451,6 +454,8 @@ var ErrNoAvailableCompactAccounts = errors.New("no available accounts support /r
 
 // OpenAIGatewayService handles OpenAI API gateway operations
 type OpenAIGatewayService struct {
+	stopAstraSetup          func()
+	codexWSAnchors          codexWSAnchorStore
 	priorityScheduling      prioritySchedulingState
 	excelBPSRecoveryMu      sync.Mutex
 	excelBPSRecoveryCancel  context.CancelFunc
@@ -529,6 +534,7 @@ type OpenAIGatewayService struct {
 	grokCredentialMutationLocks         sync.Map // key: int64(accountID), value: *sync.Mutex
 	openaiOAuth429WindowStartUnixNano   atomic.Int64
 	openaiOAuth429WindowCount           atomic.Int64
+	openAITurnAdmissionCache            openAITurnAdmissionLocalCache
 	openaiWSRetryMetrics                openAIWSRetryMetrics
 	responseHeaderFilter                *responseheaders.CompiledHeaderFilter
 	codexSnapshotThrottle               *accountWriteThrottle
@@ -761,6 +767,9 @@ func (s *OpenAIGatewayService) billingDeps() *billingDeps {
 // CloseOpenAIWSPool 关闭 OpenAI WebSocket 连接池的后台 worker 和空闲连接。
 // 应在应用优雅关闭时调用。
 func (s *OpenAIGatewayService) CloseOpenAIWSPool() {
+	if s != nil && s.stopAstraSetup != nil {
+		s.stopAstraSetup()
+	}
 	if s != nil && s.openaiWSPool != nil {
 		s.openaiWSPool.Close()
 	}

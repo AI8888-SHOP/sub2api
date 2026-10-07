@@ -884,7 +884,7 @@ func (s *AccountTokenGuardService) listAccounts(ctx context.Context, cfg Account
 	seen := map[int64]bool{}
 	out := make([]Account, 0, 32)
 	appendAccount := func(account Account) {
-		if seen[account.ID] || managed[account.ID] || !account.IsOAuth() || account.Platform != PlatformOpenAI || account.IsShadow() ||
+		if seen[account.ID] || managed[account.ID] || account.IsOpenAISiwc() || !account.IsOAuth() || account.Platform != PlatformOpenAI || account.IsShadow() ||
 			(account.Status != StatusActive && account.Status != StatusError) {
 			return
 		}
@@ -1082,6 +1082,9 @@ func (s *AccountTokenGuardService) recoverState(ctx context.Context, account *Ac
 }
 
 func (s *AccountTokenGuardService) reloginAccount(ctx context.Context, cfg AccountTokenGuardConfig, account *Account) (string, error) {
+	if account.IsOpenAISiwc() {
+		return "", errors.New("SIWC requires its own authorization flow")
+	}
 	entry, ok := findGuardReloginAccount(cfg, account.Name)
 	if !ok {
 		return "自动重登", errors.New("缺少该账号的重登凭据，请在凭证守护页面补充")
@@ -1144,6 +1147,9 @@ func findGuardReloginAccount(cfg AccountTokenGuardConfig, accountName string) (A
 
 // probe 用账号当前的 access_token 调测活接口。
 func (s *AccountTokenGuardService) probe(ctx context.Context, cfg AccountTokenGuardConfig, account *Account) AccountTokenGuardProbeResult {
+	if account.IsOpenAISiwc() {
+		return AccountTokenGuardProbeResult{State: AccountTokenGuardProbeTransient, Detail: "SIWC does not use the external Codex probe"}
+	}
 	// A probe provider's own 429, 401 or outage must not prevent recovery
 	// when a business request already established that this token was revoked.
 	if guardAccountHasAuthFailure(account) {

@@ -1,7 +1,7 @@
 import { excelBPSImageLimits } from "@/utils/excelBPSImageLimits";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { defineComponent, h } from "vue";
-import { flushPromises, mount } from "@vue/test-utils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { defineComponent, h, reactive } from "vue";
+import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
 
 import enCommon from "@/i18n/locales/en/common";
 import enSettings from "@/i18n/locales/en/admin/settings";
@@ -9,6 +9,20 @@ import zhCommon from "@/i18n/locales/zh/common";
 import zhSettings from "@/i18n/locales/zh/admin/settings";
 import SettingsView from "../SettingsView.vue";
 import { apiClient } from "@/api/client";
+
+enableAutoUnmount(afterEach);
+
+const settingsRoute = reactive({ query: {} as Record<string, unknown>, hash: '' });
+vi.mock('vue-router', async (importOriginal) => ({
+  ...await importOriginal<typeof import('vue-router')>(),
+  useRoute: () => settingsRoute,
+  useRouter: () => ({ replace: vi.fn(async (location) => Object.assign(settingsRoute, location)) }),
+}));
+beforeEach(() => {
+  settingsRoute.query = {};
+  settingsRoute.hash = '';
+  Element.prototype.scrollIntoView = vi.fn();
+});
 
 const {
   getSettings,
@@ -391,8 +405,8 @@ const baseSettingsResponse = {
   doc_url: "",
   home_content: "",
   compact_home_enabled: false,
-  excel_bps_image_mode: 'relay',
-  excel_bps_image_relay_enabled: false,
+  excel_bps_image_mode: 'native',
+  excel_bps_image_relay_enabled: true,
   excel_bps_image_base_url: '',
   excel_bps_image_max_image_mib: 20,
   excel_bps_image_max_images: 20,
@@ -500,6 +514,9 @@ const baseSettingsResponse = {
   payment_balance_recharge_multiplier: 1,
   payment_subscription_usd_to_cny_rate: 0,
   payment_recharge_fee_rate: 0,
+  payment_recharge_bonus_tiers: [],
+  payment_recharge_bonus_mode: "bonus",
+  payment_recharge_bonus_notice: "",
   payment_load_balance_strategy: "round-robin",
   payment_product_name_prefix: "",
   payment_product_name_suffix: "",
@@ -734,6 +751,40 @@ describe("admin SettingsView payment visible method controls", () => {
     adminSettingsFetch.mockResolvedValue(undefined);
   });
 
+  it("opens the risk settings from a deep link after loading without changing switches", async () => {
+    settingsRoute.query = { tab: 'features' };
+    settingsRoute.hash = '#settings-section-features-risk-control';
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, risk_control_enabled: false, cyber_session_block_enabled: false });
+    const wrapper = mountView();
+    document.body.appendChild(wrapper.element);
+    await flushPromises();
+    expect(wrapper.get('#settings-tab-features').attributes('aria-selected')).toBe('true');
+    const heading = wrapper.get('#settings-section-features-risk-control');
+    expect(heading.isVisible()).toBe(true);
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+    const vm = wrapper.vm as unknown as { form: { risk_control_enabled: boolean; cyber_session_block_enabled: boolean } };
+    expect(vm.form.risk_control_enabled).toBe(false);
+    expect(vm.form.cyber_session_block_enabled).toBe(false);
+    expect(updateSettings).not.toHaveBeenCalled();
+
+    await wrapper.get('#settings-tab-general').trigger('click');
+    await flushPromises();
+    expect(settingsRoute.hash).toBe('');
+    settingsRoute.query = { tab: 'features' };
+    settingsRoute.hash = '#settings-section-features-risk-control';
+    await flushPromises();
+    expect(heading.isVisible()).toBe(true);
+    expect(document.activeElement).toBe(heading.element);
+
+    settingsRoute.query = { tab: 'invalid' };
+    settingsRoute.hash = '#unknown';
+    await flushPromises();
+    expect(wrapper.get('#settings-tab-general').attributes('aria-selected')).toBe('true');
+    expect(updateSettings).not.toHaveBeenCalled();
+    wrapper.unmount();
+    document.body.innerHTML = '';
+  });
+
   it("points to Smart Ops for the Pelican showcase and never saves its settings", async () => {
     getSettings.mockResolvedValueOnce({
       ...baseSettingsResponse,
@@ -755,7 +806,27 @@ describe("admin SettingsView payment visible method controls", () => {
     wrapper.unmount();
   });
 
+  it("leaves the monitor mode alone unless it was changed here", async () => {
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, channel_monitor_enabled: true, channel_monitor_mode: "v3" });
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    // The monitor page may have switched the mode since this page loaded.
+    expect(updateSettings.mock.calls[0]?.[0]?.channel_monitor_mode).toBeUndefined();
+
+    const featuresTab = wrapper.findAll("button").find((node) => node.text().includes("admin.settings.tabs.features"));
+    await featuresTab?.trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-testid="settings-monitor-mode-v1"]').trigger("click");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings.mock.calls[1]?.[0]).toMatchObject({ channel_monitor_mode: "v1" });
+    wrapper.unmount();
+  });
+
   it("saves expanded image capacity and rejects values above each ceiling", async () => {
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_mode: 'relay' });
     const wrapper = mountView();
     await flushPromises();
     await wrapper.get('#excel-bps-image-enabled').setValue(true);
@@ -797,6 +868,7 @@ describe("admin SettingsView payment visible method controls", () => {
   });
 
   it("saves Excel BPS image relay from the feature switches tab", async () => {
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_mode: 'relay', excel_bps_image_relay_enabled: false });
     const wrapper = mountView();
     await flushPromises();
     const tab = wrapper.findAll('button').find((node) => node.text().includes('admin.settings.tabs.features'));
@@ -838,11 +910,15 @@ describe("admin SettingsView payment visible method controls", () => {
     wrapper.unmount();
   });
 
-  it("saves native image uploads without a public origin and reloads the mode", async () => {
+  it("defaults to native image uploads without a public origin and reloads the mode", async () => {
+    const settings: Partial<typeof baseSettingsResponse> = { ...baseSettingsResponse };
+    delete settings.excel_bps_image_mode;
+    delete settings.excel_bps_image_relay_enabled;
+    getSettings.mockResolvedValueOnce(settings);
     const wrapper = mountView();
     await flushPromises();
-    await wrapper.get('#excel-bps-image-enabled').setValue(true);
-    await wrapper.get('#excel-bps-image-mode').setValue('native');
+    expect((wrapper.get('#excel-bps-image-enabled').element as HTMLInputElement).checked).toBe(true);
+    expect((wrapper.get('#excel-bps-image-mode').element as HTMLSelectElement).value).toBe('native');
     expect(wrapper.find('#excel-bps-image-base-url').exists()).toBe(false);
     expect(wrapper.find('#excel-bps-image-max-images').exists()).toBe(true);
     expect(wrapper.find('#excel-bps-image-storage-mib').exists()).toBe(false);
@@ -860,6 +936,18 @@ describe("admin SettingsView payment visible method controls", () => {
     await loaded.get('#excel-bps-image-mode').setValue('relay');
     expect(loaded.find('#excel-bps-image-max-images').exists()).toBe(true);
     loaded.unmount();
+  });
+
+  it("preserves explicitly disabled BPS image support", async () => {
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_relay_enabled: false });
+    const wrapper = mountView();
+    await flushPromises();
+    expect((wrapper.get('#excel-bps-image-enabled').element as HTMLInputElement).checked).toBe(false);
+    expect(wrapper.find('#excel-bps-image-mode').exists()).toBe(false);
+    await wrapper.find('form').trigger('submit.prevent');
+    await flushPromises();
+    expect(updateSettings.mock.calls[0]?.[0]).toMatchObject({ excel_bps_image_relay_enabled: false });
+    wrapper.unmount();
   });
 
   it("defaults the image policy off and saves auto compaction", async () => {
@@ -904,7 +992,7 @@ describe("admin SettingsView payment visible method controls", () => {
   });
 
   it("loads saved Excel BPS image settings and preserves the address when disabled", async () => {
-    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_relay_enabled: true, excel_bps_image_base_url: 'https://saved.example', excel_bps_image_body_limit_mib: 24, excel_bps_image_budget_mib: 896, excel_bps_image_max_requests: 40 });
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_mode: 'relay', excel_bps_image_relay_enabled: true, excel_bps_image_base_url: 'https://saved.example', excel_bps_image_body_limit_mib: 24, excel_bps_image_budget_mib: 896, excel_bps_image_max_requests: 40 });
     const wrapper = mountView();
     await flushPromises();
     expect((wrapper.get('#excel-bps-image-base-url').element as HTMLInputElement).value).toBe('https://saved.example');
@@ -919,7 +1007,7 @@ describe("admin SettingsView payment visible method controls", () => {
   });
 
   it("rejects inconsistent image limits and preserves saved limits when disabling", async () => {
-    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_relay_enabled: true, excel_bps_image_base_url: 'https://images.example', excel_bps_image_max_images: 100, excel_bps_image_ttl_minutes: 60 });
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_mode: 'relay', excel_bps_image_relay_enabled: true, excel_bps_image_base_url: 'https://images.example', excel_bps_image_max_images: 100, excel_bps_image_ttl_minutes: 60 });
     const wrapper = mountView();
     await flushPromises();
     expect((wrapper.get('#excel-bps-image-max-images').element as HTMLInputElement).value).toBe('100');
@@ -942,6 +1030,7 @@ describe("admin SettingsView payment visible method controls", () => {
   });
 
   it("rejects missing or unsafe Excel BPS image origins before saving", async () => {
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_mode: 'relay' });
     const wrapper = mountView();
     await flushPromises();
     await wrapper.get('#excel-bps-image-enabled').setValue(true);
@@ -956,6 +1045,7 @@ describe("admin SettingsView payment visible method controls", () => {
   });
 
   it("rejects out-of-range image relay capacity before saving", async () => {
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_mode: 'relay' });
     const wrapper = mountView();
     await flushPromises();
     await wrapper.get('#excel-bps-image-enabled').setValue(true);
@@ -1555,6 +1645,100 @@ describe("admin SettingsView payment visible method controls", () => {
     );
   });
 
+  it("loads, edits, and saves recharge bonus tiers and the notice", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      payment_recharge_bonus_tiers: [
+        { min_amount: 500, bonus_percent: 30 },
+        { min_amount: 100, bonus_percent: 20 },
+      ],
+      payment_recharge_bonus_notice: "满 100 送 20%",
+    });
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openPaymentTab(wrapper);
+
+    // 回填按阈值升序，并渲染区间预览（首段为「不赠送」）
+    let rows = wrapper.findAll('[data-testid="recharge-bonus-tier-row"]');
+    expect(rows).toHaveLength(2);
+    const minValue = (row: (typeof rows)[number]) =>
+      (row.get('[data-testid="recharge-bonus-tier-min-input"]').element as HTMLInputElement).value;
+    expect(minValue(rows[0]!)).toBe("100");
+    expect(minValue(rows[1]!)).toBe("500");
+    expect(wrapper.get('[data-testid="recharge-bonus-tier-preview"]').text()).toContain(
+      "admin.settings.payment.rechargeBonus.previewRangeNone",
+    );
+
+    await wrapper.get('[data-testid="recharge-bonus-tier-add"]').trigger("click");
+    rows = wrapper.findAll('[data-testid="recharge-bonus-tier-row"]');
+    expect(rows).toHaveLength(3);
+    expect(rows[2]!.find('[data-testid="recharge-bonus-tier-incomplete"]').exists()).toBe(true);
+
+    // 与已有档位重复的阈值行内报错，改成新阈值后消失
+    await rows[2]!.get('[data-testid="recharge-bonus-tier-min-input"]').setValue("100");
+    await rows[2]!.get('[data-testid="recharge-bonus-tier-percent-input"]').setValue("25");
+    rows = wrapper.findAll('[data-testid="recharge-bonus-tier-row"]');
+    expect(rows[2]!.find('[data-testid="recharge-bonus-tier-error"]').exists()).toBe(true);
+    await rows[2]!.get('[data-testid="recharge-bonus-tier-min-input"]').setValue("1000");
+    rows = wrapper.findAll('[data-testid="recharge-bonus-tier-row"]');
+    expect(rows[2]!.find('[data-testid="recharge-bonus-tier-error"]').exists()).toBe(false);
+
+    // 切到折扣模式：百分比 ≥ 100 行内报错，改回 < 100 后消失
+    await wrapper.get('[data-testid="recharge-bonus-mode-discount"]').trigger("click");
+    rows = wrapper.findAll('[data-testid="recharge-bonus-tier-row"]');
+    await rows[2]!.get('[data-testid="recharge-bonus-tier-percent-input"]').setValue("100");
+    rows = wrapper.findAll('[data-testid="recharge-bonus-tier-row"]');
+    expect(rows[2]!.get('[data-testid="recharge-bonus-tier-error"]').text()).toContain("invalidDiscountPercent");
+    await rows[2]!.get('[data-testid="recharge-bonus-tier-percent-input"]').setValue("25");
+    rows = wrapper.findAll('[data-testid="recharge-bonus-tier-row"]');
+    expect(rows[2]!.find('[data-testid="recharge-bonus-tier-error"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="recharge-bonus-tier-preview"]').text()).toContain(
+      "admin.settings.payment.rechargeBonus.previewRangeDiscount",
+    );
+
+    const notice = wrapper.get('[data-testid="recharge-bonus-notice-input"]');
+    expect((notice.element as HTMLTextAreaElement).value).toBe("满 100 送 20%");
+    await notice.setValue("**新活动**");
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payment_recharge_bonus_tiers: [
+          { min_amount: 100, bonus_percent: 20 },
+          { min_amount: 500, bonus_percent: 30 },
+          { min_amount: 1000, bonus_percent: 25 },
+        ],
+        payment_recharge_bonus_mode: "discount",
+        payment_recharge_bonus_notice: "**新活动**",
+      }),
+    );
+  });
+
+  it("drops incomplete recharge bonus rows and submits an empty list when cleared", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      payment_recharge_bonus_tiers: [{ min_amount: 100, bonus_percent: 20 }],
+    });
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openPaymentTab(wrapper);
+
+    await wrapper.get('[data-testid="recharge-bonus-tier-remove"]').trigger("click");
+    await wrapper.get('[data-testid="recharge-bonus-tier-add"]').trigger("click");
+    expect(wrapper.findAll('[data-testid="recharge-bonus-tier-row"]')).toHaveLength(1);
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ payment_recharge_bonus_tiers: [] }),
+    );
+  });
+
   it("links payment guidance to README sections instead of removed payment docs", async () => {
     const wrapper = mountView();
 
@@ -2088,8 +2272,10 @@ describe("admin SettingsView payment visible method controls", () => {
         },
       },
       setup(props) {
-        receivedProviders = props.providers as Array<Record<string, unknown>>;
-        return () => h("div", { class: "provider-list-capture" });
+        return () => {
+          receivedProviders = props.providers as Array<Record<string, unknown>>;
+          return h("div", { class: "provider-list-capture" });
+        };
       },
     });
 
@@ -2413,7 +2599,7 @@ describe("admin SettingsView platform quota matrix", () => {
     getProviders.mockResolvedValue({ data: [] });
   });
 
-  it("从 baseSettings 加载默认平台配额数据并在 Users tab 渲染 5 平台行", async () => {
+  it("从 baseSettings 加载默认平台配额数据并在 Users tab 渲染 6 平台行", async () => {
     const wrapper = mountView();
     await flushPromises();
     await openUsersTab(wrapper);
@@ -2426,9 +2612,10 @@ describe("admin SettingsView platform quota matrix", () => {
     expect(html).toContain("openai");
     expect(html).toContain("gemini");
     expect(html).toContain("antigravity");
+    expect(html).toContain("typesafe");
   });
 
-  it("保存时 updateSettings payload 应包含嵌套 default_platform_quotas 对象（含全 5 平台）", async () => {
+  it("保存时 updateSettings payload 应包含嵌套 default_platform_quotas 对象（含全 6 平台）", async () => {
     const wrapper = mountView();
     await flushPromises();
     await openUsersTab(wrapper);
@@ -2444,7 +2631,7 @@ describe("admin SettingsView platform quota matrix", () => {
     // 应携带嵌套对象，而非扁平字段
     expect(payload).toHaveProperty("default_platform_quotas");
     const quotas = payload["default_platform_quotas"] as Record<string, unknown>;
-    const platforms = ["anthropic", "openai", "gemini", "antigravity", "grok"];
+    const platforms = ["anthropic", "openai", "gemini", "antigravity", "grok", "typesafe"];
     for (const p of platforms) {
       expect(quotas).toHaveProperty(p);
       const pq = quotas[p] as Record<string, unknown>;
@@ -2458,7 +2645,7 @@ describe("admin SettingsView platform quota matrix", () => {
     expect(payload).not.toHaveProperty("default_platform_quota_openai_weekly");
   });
 
-  it("加载后 form.default_platform_quotas 含全 5 平台，从嵌套 JSON 正确读取数值", async () => {
+  it("加载后 form.default_platform_quotas 含全 6 平台，从嵌套 JSON 正确读取数值", async () => {
     getSettings.mockResolvedValueOnce({
       ...baseSettingsResponse,
       default_platform_quotas: {
@@ -2483,6 +2670,7 @@ describe("admin SettingsView platform quota matrix", () => {
     // 缺失平台应补全为 null
     expect(quotas["gemini"]).toEqual({ daily: null, weekly: null, monthly: null });
     expect(quotas["antigravity"]).toEqual({ daily: null, weekly: null, monthly: null });
+    expect(quotas["typesafe"]).toEqual({ daily: null, weekly: null, monthly: null });
   });
 
   it("空输入（v-model.number 产出 \"\"）在提交时清洗为 null 而非空字符串", async () => {

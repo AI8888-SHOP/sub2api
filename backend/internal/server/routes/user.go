@@ -76,6 +76,8 @@ func RegisterUserRoutes(
 		keys := authenticated.Group("/keys")
 		{
 			keys.GET("", h.APIKey.List)
+			// 必须在动态 /:id 路由之前注册，避免被参数路由吞掉。
+			keys.GET("/concurrency", h.APIKey.GetConcurrencyQueue)
 			keys.GET("/:id", h.APIKey.GetByID)
 			keys.POST("", h.APIKey.Create)
 			keys.PUT("/:id", h.APIKey.Update)
@@ -162,6 +164,15 @@ func RegisterUserRoutes(
 			monitorV2.GET("/matrix", h.ChannelMonitorV2.Matrix)
 			monitorV2.GET("/errors", h.ChannelMonitorV2.Errors)
 			monitorV2.GET("/users", h.ChannelMonitorV2.Users)
+		}
+
+		// V3 component status page requires feature on + mode=v3.
+		monitorV3 := authenticated.Group("/channel-monitor-v3")
+		monitorV3.Use(panelRateLimiter.Heavy())
+		monitorV3.Use(channelMonitorModeV3Guard(settingService))
+		{
+			monitorV3.GET("/status", h.ChannelMonitorV3.Status)
+			monitorV3.GET("/incidents", h.ChannelMonitorV3.Incidents)
 		}
 	}
 }

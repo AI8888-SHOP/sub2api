@@ -6,11 +6,30 @@ import (
 	"errors"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 type accountTokenGuardV2Repository struct {
 	db *sql.DB
+}
+
+func (r *accountTokenGuardV2Repository) UpdateSwitches(ctx context.Context, id int64, enabled, autoRelogin *bool) error {
+	result, err := r.db.ExecContext(ctx, `UPDATE account_token_guard_v2_accounts
+		SET enabled = COALESCE($2, enabled), auto_relogin_enabled = COALESCE($3, auto_relogin_enabled),
+			next_probe_at = CASE WHEN $2 = TRUE AND NOT enabled THEN LEAST(next_probe_at, NOW()) ELSE next_probe_at END,
+			updated_at = NOW() WHERE account_id = $1`, id, enabled, autoRelogin)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return infraerrors.NotFound("TOKEN_GUARD_V2_NOT_FOUND", "Monitored account not found")
+	}
+	return nil
 }
 
 func NewAccountTokenGuardV2Repository(db *sql.DB) service.AccountTokenGuardV2Repository {
@@ -33,6 +52,20 @@ func (r *accountTokenGuardV2Repository) UpsertAccount(ctx context.Context, accou
 func (r *accountTokenGuardV2Repository) DeleteAccount(ctx context.Context, accountID int64) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM account_token_guard_v2_accounts WHERE account_id = $1`, accountID)
 	return err
+}
+
+// PruneDeletedAccounts handles soft deletion as well as legacy orphaned rows.
+// A failed probe or missing login configuration is not evidence of deletion.
+func (r *accountTokenGuardV2Repository) PruneDeletedAccounts(ctx context.Context) (int64, error) {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM account_token_guard_v2_accounts AS guard
+		WHERE NOT EXISTS (
+			SELECT 1 FROM accounts AS account
+			WHERE account.id = guard.account_id AND account.deleted_at IS NULL
+		)`)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func (r *accountTokenGuardV2Repository) GetAccount(ctx context.Context, accountID int64) (*service.AccountTokenGuardV2Record, error) {

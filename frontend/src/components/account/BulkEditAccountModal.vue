@@ -52,21 +52,6 @@
           <ExcelBPSModeSwitches :enabled="excelBPSEnabled" :mode="excelBPSMode"
             :loading="bpsDefaults.loading.value" :failed="bpsDefaults.failed.value" :applied="bpsDefaults.applied.value"
             :available="!authStore.isObserver" prefix="bulk-excel-bps" @toggle="bpsDefaults.toggle" />
-          <div v-if="excelBPSEnabled" class="mt-3" data-testid="bulk-excel-bps-protocol-selector">
-            <span class="input-label">{{ t('admin.accounts.openai.excelBPSProtocol') }}</span>
-            <div class="mt-2 grid gap-2 sm:grid-cols-2" role="radiogroup" :aria-label="t('admin.accounts.openai.excelBPSProtocol')">
-              <label v-for="protocol in excelBPSProtocolOptions" :key="protocol.value"
-                class="flex cursor-pointer items-start gap-2 rounded-lg border p-3 transition-colors"
-                :class="excelBPSProtocol === protocol.value ? 'border-primary-500 bg-primary-50 dark:border-primary-700 dark:bg-primary-950/30' : 'border-gray-200 dark:border-dark-600'">
-                <input v-model="excelBPSProtocol" type="radio" :value="protocol.value"
-                  :data-testid="`bulk-excel-bps-protocol-${protocol.value}`" class="mt-0.5 text-primary-600 focus:ring-primary-500" />
-                <span>
-                  <span class="block text-sm font-medium">{{ protocol.label }}</span>
-                  <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ protocol.description }}</span>
-                </span>
-              </label>
-            </div>
-          </div>
           <div v-if="excelBPSEnabled" class="mt-3 space-y-3">
             <label class="flex items-center gap-2 text-sm">
               <input v-model="excelBPSAllModels" type="checkbox" data-testid="bulk-excel-bps-all-models" />
@@ -88,15 +73,6 @@
                 <span class="text-sm">{{ t('admin.accounts.openai.excelBPSOmitUnsupportedTools') }}</span>
               </label>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSOmitUnsupportedToolsDesc') }}</p>
-            </div>
-            <div class="mt-3">
-              <label class="flex items-center gap-2">
-                <input v-model="excelBPSIgnoreImages" type="checkbox"
-                  data-testid="bulk-excel-bps-ignore-images"
-                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
-                <span class="text-sm">{{ t('admin.accounts.openai.excelBPSIgnoreImages') }}</span>
-              </label>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSIgnoreImagesDesc') }}</p>
             </div>
             <div class="mt-3">
               <label class="flex items-center gap-2">
@@ -507,6 +483,7 @@
 
               <ModelWhitelistSelector
                 v-model="allowedModels"
+                :model-mappings="modelMappings"
                 :platforms="targetSelectedPlatforms"
               />
 
@@ -1590,7 +1567,7 @@ import { DEFAULT_ACCOUNT_COST_MULTIPLIER, isValidAccountCostMultiplier } from '@
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ExcelBPSModeSwitches from './ExcelBPSModeSwitches.vue'
-import { type ExcelBPSMode, type ExcelBPSProtocol } from '@/utils/excelBPSDefaults'
+import type { ExcelBPSMode } from '@/utils/excelBPSDefaults'
 import { useExcelBPSDefaults } from '@/composables/useExcelBPSDefaults'
 import { DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES, MAX_BPS_RECOVERY_INTERVAL_MINUTES, isValidBPSRecoveryInterval, bpsRecoveryIntervalOrDefault } from '@/utils/excelBPSRecovery'
 import { useAppStore } from '@/stores/app'
@@ -1824,11 +1801,6 @@ const status = ref<'active' | 'inactive'>('active')
 const groupIds = ref<number[]>([])
 const excelBPSEnabled = ref(false)
 const excelBPSMode = ref<ExcelBPSMode>('initial')
-const excelBPSProtocol = ref<ExcelBPSProtocol>('excel')
-const excelBPSProtocolOptions = computed(() => [
-  { value: 'excel' as const, label: t('admin.accounts.openai.excelBPSProtocolExcel'), description: t('admin.accounts.openai.excelBPSProtocolExcelDesc') },
-  { value: 'google_sheets' as const, label: t('admin.accounts.openai.excelBPSProtocolGoogleSheets'), description: t('admin.accounts.openai.excelBPSProtocolGoogleSheetsDesc') }
-])
 const excelBPSAllModels = ref(false)
 const excelBPSModels = ref<string[]>([...DEFAULT_EXCEL_BPS_MODELS])
 const excelBPSMihomo = ref(false)
@@ -1838,7 +1810,6 @@ const excelBPSAutoDisableOn403 = ref(false)
 const excelBPSAutoRecoverOn403 = ref(false)
 const excelBPSRecoveryIntervalMinutes = ref<number | string>(DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES)
 const excelBPSOmitUnsupportedTools = ref(false)
-const excelBPSIgnoreImages = ref(false)
 const excelBPSIgnoreEncryptedContent = ref(false)
 const excelBPSAutoMoveOn403 = ref(false)
 const excelBPS403TargetGroupID = ref<number | string>('')
@@ -1849,7 +1820,7 @@ const bpsDefaults = useExcelBPSDefaults({
   context: () => JSON.stringify([props.show, props.accountIds, props.selectedPlatforms, props.selectedTypes, authStore.user?.id, authStore.isObserver]),
   fields: {
     all_models: excelBPSAllModels, models: excelBPSModels,
-    omit_unsupported_tools: excelBPSOmitUnsupportedTools, ignore_images: excelBPSIgnoreImages,
+    omit_unsupported_tools: excelBPSOmitUnsupportedTools,
     ignore_encrypted_content: excelBPSIgnoreEncryptedContent,
     auto_disable_on_403: excelBPSAutoDisableOn403, auto_recover_on_403: excelBPSAutoRecoverOn403,
     recovery_interval_minutes: excelBPSRecoveryIntervalMinutes,
@@ -2161,7 +2132,6 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     const extra = ensureExtra()
     extra.openai_excel_bps = excelBPSEnabled.value
     extra.openai_excel_bps_config_mode = excelBPSEnabled.value ? excelBPSMode.value : null
-    extra.openai_excel_bps_protocol = excelBPSProtocol.value
     // null explicitly removes an existing model scope; [] selects no BPS models.
     extra.openai_excel_bps_models = excelBPSEnabled.value && !excelBPSAllModels.value
       ? [...new Set(excelBPSModels.value.map(model => model.trim()).filter(Boolean))]
@@ -2176,7 +2146,6 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     extra.openai_excel_bps_auto_recover_on_403 = excelBPSEnabled.value && excelBPSAutoDisableOn403.value && excelBPSAutoRecoverOn403.value
     extra.openai_excel_bps_403_recovery_interval_minutes = bpsRecoveryIntervalOrDefault(excelBPSRecoveryIntervalMinutes.value)
     extra.openai_excel_bps_omit_unsupported_tools = excelBPSEnabled.value && excelBPSOmitUnsupportedTools.value
-    extra.openai_excel_bps_ignore_images = excelBPSEnabled.value && excelBPSIgnoreImages.value
     extra.openai_excel_bps_ignore_encrypted_content = excelBPSEnabled.value && excelBPSIgnoreEncryptedContent.value
     extra.openai_excel_bps_auto_move_on_403 = excelBPSEnabled.value && excelBPSAutoMoveOn403.value
     extra.openai_excel_bps_403_target_group_id = excelBPSEnabled.value && excelBPSAutoMoveOn403.value
@@ -2618,7 +2587,6 @@ watch(
       baseUrl.value = ''
       excelBPSEnabled.value = false
       excelBPSMode.value = 'initial'
-      excelBPSProtocol.value = 'excel'
       excelBPSAllModels.value = false
       excelBPSModels.value = [...DEFAULT_EXCEL_BPS_MODELS]
       excelBPSMihomo.value = false
@@ -2628,7 +2596,6 @@ watch(
       excelBPSAutoRecoverOn403.value = false
       excelBPSRecoveryIntervalMinutes.value = DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES
       excelBPSOmitUnsupportedTools.value = false
-      excelBPSIgnoreImages.value = false
       excelBPSIgnoreEncryptedContent.value = false
       excelBPSAutoMoveOn403.value = false
       excelBPS403TargetGroupID.value = ''

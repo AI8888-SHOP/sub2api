@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/siwc"
 	"github.com/Wei-Shaw/sub2api/internal/reauthruntime"
 	"log/slog"
 	"net/http"
@@ -96,6 +97,7 @@ type AccountTokenGuardV2ProbeCompletion struct {
 type AccountTokenGuardV2Repository interface {
 	UpsertAccount(ctx context.Context, accountID int64, enabled, autoRelogin bool) error
 	DeleteAccount(ctx context.Context, accountID int64) error
+	PruneDeletedAccounts(ctx context.Context) (int64, error)
 	GetAccount(ctx context.Context, accountID int64) (*AccountTokenGuardV2Record, error)
 	ListAccounts(ctx context.Context) ([]AccountTokenGuardV2Record, error)
 	ClaimDue(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]AccountTokenGuardV2Record, error)
@@ -120,18 +122,20 @@ type AccountTokenGuardV2Prober interface {
 }
 
 type AccountTokenGuardV2AccountInput struct {
-	LoginEmail         string `json:"login_email"`
-	CredentialMode     string `json:"credential_mode"`
-	Engine             string `json:"engine"`
-	ProxySource        string `json:"proxy_source"`
-	ProxyID            *int64 `json:"proxy_id"`
-	Password           string `json:"password"`
-	TOTPSecret         string `json:"totp_secret"`
-	OTPURL             string `json:"otp_url"`
-	ClearPassword      bool   `json:"clear_password"`
-	ClearTOTP          bool   `json:"clear_totp"`
-	Enabled            bool   `json:"enabled"`
-	AutoReloginEnabled bool   `json:"auto_relogin_enabled"`
+	PreserveEnabled     bool
+	PreserveAutoRelogin bool
+	LoginEmail          string `json:"login_email"`
+	CredentialMode      string `json:"credential_mode"`
+	Engine              string `json:"engine"`
+	ProxySource         string `json:"proxy_source"`
+	ProxyID             *int64 `json:"proxy_id"`
+	Password            string `json:"password"`
+	TOTPSecret          string `json:"totp_secret"`
+	OTPURL              string `json:"otp_url"`
+	ClearPassword       bool   `json:"clear_password"`
+	ClearTOTP           bool   `json:"clear_totp"`
+	Enabled             bool   `json:"enabled"`
+	AutoReloginEnabled  bool   `json:"auto_relogin_enabled"`
 }
 
 type AccountTokenGuardV2Account struct {
@@ -222,15 +226,26 @@ func (s *AccountTokenGuardV2Service) Start() {
 		return
 	}
 	s.startOnce.Do(func() {
+		siwcDone := make(chan struct{})
 		go func() {
-			defer close(s.doneCh)
+			defer close(siwcDone)
+			s.reauth.runSiwcWorker(s.rootCtx)
+		}()
+		go func() {
+			defer func() { <-siwcDone; close(s.doneCh) }()
 			ticker := time.NewTicker(time.Minute)
 			defer ticker.Stop()
 			runCycle := func() {
 				ctx, cancel := context.WithTimeout(s.rootCtx, 90*time.Second)
 				defer cancel()
 				if rows, err := s.repo.ListAccounts(ctx); err == nil && len(rows) > 0 {
-					s.reauth.EnsureWorker()
+					for _, row := range rows {
+						account, err := s.accounts.GetAccount(ctx, row.AccountID)
+						if err == nil && account != nil && !account.IsOpenAISiwc() {
+							s.reauth.EnsureWorker()
+							break
+						}
+					}
 				}
 				if _, err := s.RunDue(ctx); err != nil {
 					slog.Warn("account_token_guard_v2_cycle_failed", "error", err)
@@ -269,6 +284,22 @@ func (s *AccountTokenGuardV2Service) SaveAccount(ctx context.Context, accountID 
 	if accountID <= 0 {
 		return nil, infraerrors.BadRequest("TOKEN_GUARD_V2_ACCOUNT_INVALID", "invalid account id")
 	}
+	preserveSwitches := false
+	if input.PreserveEnabled || input.PreserveAutoRelogin {
+		existing, err := s.repo.GetAccount(ctx, accountID)
+		if err != nil {
+			return nil, err
+		}
+		if existing != nil {
+			preserveSwitches = input.PreserveEnabled && input.PreserveAutoRelogin
+			if input.PreserveEnabled {
+				input.Enabled = existing.Enabled
+			}
+			if input.PreserveAutoRelogin {
+				input.AutoReloginEnabled = existing.AutoReloginEnabled
+			}
+		}
+	}
 	if _, err := s.reauth.SaveCredentialConfig(ctx, accountID, OpenAIOAuthReauthConfigInput{
 		LoginEmail: input.LoginEmail, CredentialMode: input.CredentialMode, Engine: input.Engine,
 		ProxySource: input.ProxySource, ProxyID: input.ProxyID,
@@ -277,8 +308,10 @@ func (s *AccountTokenGuardV2Service) SaveAccount(ctx context.Context, accountID 
 	}); err != nil {
 		return nil, err
 	}
-	if err := s.repo.UpsertAccount(ctx, accountID, input.Enabled, input.AutoReloginEnabled); err != nil {
-		return nil, infraerrors.New(http.StatusInternalServerError, "TOKEN_GUARD_V2_SAVE_FAILED", "failed to save monitored account")
+	if !preserveSwitches {
+		if err := s.repo.UpsertAccount(ctx, accountID, input.Enabled, input.AutoReloginEnabled); err != nil {
+			return nil, infraerrors.New(http.StatusInternalServerError, "TOKEN_GUARD_V2_SAVE_FAILED", "failed to save monitored account")
+		}
 	}
 	return s.accountView(ctx, accountID)
 }
@@ -346,6 +379,15 @@ func (s *AccountTokenGuardV2Service) recordView(ctx context.Context, record Acco
 }
 
 func (s *AccountTokenGuardV2Service) RunDue(ctx context.Context) (int, error) {
+	// Clean all orphaned records, including paused accounts and future probes.
+	// Only the database's account deletion state is authoritative, not read errors.
+	removed, err := s.repo.PruneDeletedAccounts(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("prune deleted credential operations accounts: %w", err)
+	}
+	if removed > 0 {
+		slog.Info("account_token_guard_v2_deleted_accounts_pruned", "count", removed)
+	}
 	records, err := s.repo.ClaimDue(ctx, s.leaseOwner, accountTokenGuardV2LeaseDuration, 10)
 	if err != nil {
 		return 0, err
@@ -461,6 +503,13 @@ func (s *AccountTokenGuardV2Service) probeAccount(ctx context.Context, account *
 	_, err := s.prober.FetchOpenAIModelsList(ctx, account)
 	if err == nil {
 		return AccountTokenGuardV2ProbeOK, "credential accepted"
+	}
+	var siwcErr *siwc.HTTPError
+	if account.IsOpenAISiwc() && errors.As(err, &siwcErr) {
+		if siwcErr.StatusCode == http.StatusUnauthorized || siwcErr.Code == "invalid_grant" {
+			return AccountTokenGuardV2ProbeAuth, "SIWC credential requires reauthorization"
+		}
+		return AccountTokenGuardV2ProbeTransient, "SIWC catalog is unavailable; grant was not rejected"
 	}
 	var upstreamErr *codexModelsManifestUpstreamError
 	if errors.As(err, &upstreamErr) && (upstreamErr.statusCode == http.StatusUnauthorized || upstreamErr.statusCode == http.StatusForbidden) {

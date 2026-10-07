@@ -954,6 +954,9 @@ func buildCodexAccountIndex(accounts []service.Account) *codexAccountIndex {
 }
 
 func (i *codexAccountIndex) Add(account service.Account) {
+	if account.IsOpenAISiwc() {
+		return
+	}
 	if i == nil {
 		return
 	}

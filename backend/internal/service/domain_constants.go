@@ -49,6 +49,7 @@ const (
 	PlatformZhipu      = domain.PlatformZhipu
 	PlatformDeepseek   = domain.PlatformDeepseek
 	PlatformMiniMax    = domain.PlatformMiniMax
+	PlatformTypeSafe   = domain.PlatformTypeSafe
 	PlatformOpenCodeGo = domain.PlatformOpenCodeGo
 	PlatformComposite  = domain.PlatformComposite
 	// PlatformKiro is retained for unsupported-platform threshold tests and legacy
@@ -136,6 +137,7 @@ var AllowedQuotaPlatforms = []string{
 	PlatformDeepseek,
 	PlatformMiniMax,
 	PlatformOpenCodeGo,
+	PlatformTypeSafe,
 }
 
 // AllowedSchedulingThresholdPlatforms 是允许设置账号自动停调阈值的平台列表。
@@ -247,6 +249,7 @@ const (
 	SettingKeyLoginAgreementMode                  = "login_agreement_mode"                  // 条款确认展示模式：modal / checkbox
 	SettingKeyLoginAgreementUpdatedAt             = "login_agreement_updated_at"            // 条款更新日期（展示用）
 	SettingKeyLoginAgreementDocuments             = "login_agreement_documents"             // 条款文档列表（JSON，Markdown 内容）
+	SettingKeyCyberPolicyUserAllowlist            = "cyber_policy_user_allowlist"           // Platform user IDs with log-only cyber handling
 
 	// 邮件服务设置
 	SettingKeySMTPHost     = "smtp_host"      // SMTP服务器地址
@@ -492,12 +495,14 @@ const (
 	SettingKeyChannelMonitorEnabled = "channel_monitor_enabled"
 
 	// SettingKeyChannelMonitorMode selects exclusive implementation:
-	// "v1" active probes, "v2" passive aggregation. Default "v1" (opt-in to v2).
+	// "v1" active probes, "v2" passive aggregation, "v3" component status page.
+	// Default "v1" (opt-in to v2/v3).
 	SettingKeyChannelMonitorMode = "channel_monitor_mode"
 
-	// ChannelMonitorModeV1/V2 are the only accepted mode values.
+	// ChannelMonitorModeV1/V2/V3 are the only accepted mode values.
 	ChannelMonitorModeV1 = "v1"
 	ChannelMonitorModeV2 = "v2"
+	ChannelMonitorModeV3 = "v3"
 
 	// SettingKeyChannelMonitorDefaultIntervalSeconds controls the default interval (seconds)
 	// pre-filled when creating a new channel monitor from the admin UI. Range: [15, 3600].
@@ -519,6 +524,11 @@ const (
 	// /users payload from non-admin channel-monitor v2 viewers.
 	// Default false (keep the current ranking tab). Admin endpoints always keep it.
 	SettingKeyChannelMonitorHideUserRanking = "channel_monitor_hide_user_ranking"
+
+	// Prism browser bridge is administrator-managed and disabled by default.
+	SettingKeyPrismBrowserEnabled = "prism_browser_enabled"
+	SettingKeyPrismBrowserBaseURL = "prism_browser_base_url"
+	SettingKeyPrismBrowserAPIKey  = "prism_browser_api_key"
 
 	// SettingKeyGrokDefaultTextModel is the fallback Grok text model for empty
 	// request models and built-in Grok aliases (e.g. "grok" → this id). Default grok-4.5.

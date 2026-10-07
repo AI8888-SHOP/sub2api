@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-已有明确异常时优先使用 Bug 表单。使用问题可先查 [新人入门](https://github.com/AI8888-SHOP/sub2api/blob/production/docs/新人入门.md) 和 [贡献指南](https://github.com/AI8888-SHOP/sub2api/blob/production/CONTRIBUTING.md)。
+        已有明确异常时优先使用 Bug 表单。使用问题可先查 [新人入门](https://github.com/ranxi2001/sub2api/blob/production/docs/新人入门.md) 和 [贡献指南](https://github.com/ranxi2001/sub2api/blob/production/CONTRIBUTING.md)。
         不要粘贴 Token、Cookie、OAuth 导出、ticket/state、含密钥的订阅 URL、完整配置或私人数据。
   - type: checkboxes
     id: preflight

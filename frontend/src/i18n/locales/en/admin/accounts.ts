@@ -96,6 +96,12 @@ export default {
       schedulableEnabled: 'Scheduling enabled',
       schedulableDisabled: 'Scheduling disabled',
       failedToToggleSchedulable: 'Failed to toggle scheduling status',
+      priorityQuick: {
+        raise: 'Raise priority (value -1)',
+        lower: 'Lower priority (value +1)',
+        editHint: 'Click to type a value; lower is used first',
+        failed: 'Failed to update priority'
+      },
       groupCountTotal: '{count} groups total',
       platforms: {
         anthropic: 'Anthropic',
@@ -109,6 +115,7 @@ export default {
         deepseek: 'DeepSeek',
         minimax: 'MiniMax',
         opencode_go: 'OpenCode',
+        typesafe: 'TypeSafe / Jev',
       },
       cnProviders: {
         accountMode: {
@@ -650,18 +657,17 @@ export default {
       // OpenAI specific hints
       openai: {
         baseUrlHint: 'Leave default for official OpenAI API',
+        prismBrowser: 'Use Prism browser protocol automatically',
+        prismBrowserDesc: 'Uses this OpenAI OAuth account with the server-managed Prism adapter. No separate credentials are needed. Supports text for these four models and client function/custom tools for 6.1 Sol.',
+        prismBrowserModels: 'Models to route through Prism',
+        prismBrowserModelsHint: 'Matches model names after account mapping. Only selected models use Prism; others keep their Codex / Excel routing. Selecting none disables Prism routing. Availability depends on the upstream account.',
+        prismBrowserManagedEndpoint: 'Selected models use HTTP/SSE. Tool requests require an updated server adapter. Hosted tools such as web search and image generation are unsupported.',
+        prismBrowserConcurrencyHint: 'Prism also has adapter concurrency limits; its requests do not affect this tier’s progress.',
         apiKeyHint: 'Your OpenAI API Key',
         oauthPassthrough: 'Auto passthrough (auth only)',
         excelBPS: 'Excel / BPS protocol',
-        excelBPSProtocol: 'BPS client protocol',
-        excelBPSProtocolExcel: 'Excel',
-        excelBPSProtocolExcelDesc: 'Use the Excel plugin client identity. Existing accounts use this protocol by default.',
-        excelBPSProtocolGoogleSheets: 'Google Sheets',
-        excelBPSProtocolGoogleSheetsDesc: 'Use the Google Sheets plugin client identity. The upstream must support this protocol.',
         excelBPSOmitUnsupportedTools: 'Keep BPS and omit unsupported hosted tools',
         excelBPSOmitUnsupportedToolsDesc: 'Off by default: declarations for live web search (external_web_access=true), high search context or image generation use native Codex, even with tool_choice=auto before any tool executes. Enable to keep BPS, omit hosted tools unsupported by the bridge and tell the model they are unavailable. This does not add search or image generation support; client function tools are unaffected. Forced tool choices return 400; tool_choice=none does not trigger tool fallback. Fallback reasons appear in response headers and excel_bps.native_fallback diagnostic logs.',
-        excelBPSIgnoreImages: 'Ignore image inputs when image support is disabled',
-        excelBPSIgnoreImagesDesc: 'Disabled by default. Only applies while Excel / BPS image support is off in system settings. Replaces every image in current and historical messages and tool results with an unavailable notice before forwarding, preserving text and tool call pairing so old screenshots cannot repeatedly block the conversation. Even mixed text/image results tell the model it cannot see the image and should not retry view_image or other image-reading tools while image support is disabled. Enabling image support restores normal image handling.',
         excelBPSCacheCreationAsInput: 'Bill cache creation as regular input',
         excelBPSMihomo: 'BPS session proxy (use with caution)',
         excelBPSProxySource: 'Exit source',
@@ -929,6 +935,7 @@ export default {
       enterCustomModelName: 'Enter custom model name',
       addModel: 'Add',
       modelExists: 'Model already exists',
+      modelMappingConflict: 'A mapping already exists for {from} → {to}. Modify or remove it under Model Mapping before adding this whitelist model',
       modelCount: '{count} models',
       poolMode: 'Pool Mode',
       poolModeHint: 'Enable when upstream is an account pool; errors won\'t mark local account status',
@@ -989,6 +996,10 @@ export default {
           cli: 'Grok Build CLI',
           official: 'Official API'
         }
+      },
+      grokSkipForbiddenPause: {
+        title: 'Keep scheduling after unclassified Grok 403',
+        hint: 'Off by default. When enabled, an unclassified inference 403 skips the default 30-minute account-wide pause and health penalty, with at most one alternate account per request. Explicit revocation, suspension, entitlement denial, content, billing/quota handling and admin rules remain in effect.'
       },
       grokClientToolCache: {
         title: 'Client Tool Cache (May Change Automatic Tool Selection)',
@@ -1670,11 +1681,16 @@ export default {
         promptLabel: 'Test message',
         promptHint: 'The same prompt is sent unchanged to every parallel run.',
         model: 'Model',
-        modelHint: 'Defaults to gpt-6-astra; adjust it for the account when needed.',
+        modelHint: 'Defaults to {model}; adjust it for the account when needed.',
         reasoning: 'Reasoning effort',
         reasoningLow: 'Low',
         reasoningMedium: 'Medium',
         reasoningHigh: 'High',
+        reasoningNone: 'None',
+        reasoningMinimal: 'Minimal',
+        reasoningXHigh: 'Extra high',
+        reasoningMax: 'Max',
+        reasoningUltra: 'Ultra',
         parallel: 'Parallel runs',
         parallelHint: 'Up to 8 outputs can be generated for the same account at once.',
         results: 'New Test',

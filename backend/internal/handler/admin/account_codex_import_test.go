@@ -1075,3 +1075,12 @@ func TestImportCodexSessionsSkipExistingPreservesAccount(t *testing.T) {
 		t.Fatal("legacy create-only behavior changed")
 	}
 }
+
+func TestCodexImportDoesNotDeduplicateSIWCEmail(t *testing.T) {
+	account := service.Account{ID: 999, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Credentials: map[string]any{"auth_mode": "siwc", "email": "same@example.test", "access_token": "siwc-token"}}
+	index := buildCodexAccountIndex([]service.Account{account})
+	existing, _ := index.Find(buildCodexImportIdentityKeys("", "", "same@example.test", "codex-token", "refresh"), "")
+	if existing != nil {
+		t.Fatal("Codex import matched a SIWC account with the same email")
+	}
+}

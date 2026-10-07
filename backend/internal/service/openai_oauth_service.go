@@ -3,9 +3,11 @@ package service
 import (
 	"context"
 	"crypto/subtle"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/siwc"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -14,6 +16,8 @@ import (
 
 // OpenAIOAuthService handles OpenAI OAuth authentication flows
 type OpenAIOAuthService struct {
+	siwcOnce             sync.Once
+	siwc                 *siwcServiceState
 	sessionStore         *openai.SessionStore
 	proxyRepo            ProxyRepository
 	oauthClient          OpenAIOAuthClient
@@ -115,21 +119,22 @@ type OpenAIExchangeCodeInput struct {
 
 // OpenAITokenInfo represents the token information for OpenAI
 type OpenAITokenInfo struct {
-	AccessToken           string `json:"access_token"`
-	RefreshToken          string `json:"refresh_token"`
-	IDToken               string `json:"id_token,omitempty"`
-	ExpiresIn             int64  `json:"expires_in"`
-	ExpiresAt             int64  `json:"expires_at"`
-	ClientID              string `json:"client_id,omitempty"`
-	AuthMode              string `json:"auth_mode,omitempty"`
-	Email                 string `json:"email,omitempty"`
-	ChatGPTAccountID      string `json:"chatgpt_account_id,omitempty"`
-	ChatGPTUserID         string `json:"chatgpt_user_id,omitempty"`
-	ChatGPTAccountFedRAMP bool   `json:"chatgpt_account_is_fedramp,omitempty"`
-	OrganizationID        string `json:"organization_id,omitempty"`
-	PlanType              string `json:"plan_type,omitempty"`
-	SubscriptionExpiresAt string `json:"subscription_expires_at,omitempty"`
-	PrivacyMode           string `json:"privacy_mode,omitempty"`
+	Siwc                  *siwc.Credential `json:"siwc,omitempty"`
+	AccessToken           string           `json:"access_token"`
+	RefreshToken          string           `json:"refresh_token"`
+	IDToken               string           `json:"id_token,omitempty"`
+	ExpiresIn             int64            `json:"expires_in"`
+	ExpiresAt             int64            `json:"expires_at"`
+	ClientID              string           `json:"client_id,omitempty"`
+	AuthMode              string           `json:"auth_mode,omitempty"`
+	Email                 string           `json:"email,omitempty"`
+	ChatGPTAccountID      string           `json:"chatgpt_account_id,omitempty"`
+	ChatGPTUserID         string           `json:"chatgpt_user_id,omitempty"`
+	ChatGPTAccountFedRAMP bool             `json:"chatgpt_account_is_fedramp,omitempty"`
+	OrganizationID        string           `json:"organization_id,omitempty"`
+	PlanType              string           `json:"plan_type,omitempty"`
+	SubscriptionExpiresAt string           `json:"subscription_expires_at,omitempty"`
+	PrivacyMode           string           `json:"privacy_mode,omitempty"`
 }
 
 // ExchangeCode exchanges authorization code for tokens
@@ -355,6 +360,13 @@ func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *A
 		}
 	}
 
+	if account.IsOpenAISiwc() {
+		cred, err := s.siwcState().client.Refresh(ctx, siwc.FromMap(account.Credentials), proxyURL)
+		if err != nil {
+			return nil, err
+		}
+		return siwcTokenInfo(cred), nil
+	}
 	accessToken := account.GetCredential("access_token")
 	if account.IsOpenAIPersonalAccessToken() {
 		if accessToken == "" {
@@ -394,6 +406,9 @@ func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *A
 
 // BuildAccountCredentials builds credentials map from token info
 func (s *OpenAIOAuthService) BuildAccountCredentials(tokenInfo *OpenAITokenInfo) map[string]any {
+	if tokenInfo.Siwc != nil {
+		return tokenInfo.Siwc.Map()
+	}
 	creds := map[string]any{
 		"access_token": tokenInfo.AccessToken,
 	}
@@ -444,6 +459,21 @@ func (s *OpenAIOAuthService) BuildAccountCredentials(tokenInfo *OpenAITokenInfo)
 // Stop stops the session store cleanup goroutine
 func (s *OpenAIOAuthService) Stop() {
 	s.sessionStore.Stop()
+	state := s.siwcState()
+	state.mu.Lock()
+	state.closed = true
+	for id, job := range state.jobs {
+		if job.cancel != nil {
+			job.cancel()
+		}
+		if job.expiry != nil {
+			job.expiry.Stop()
+		}
+		delete(state.jobs, id)
+		state.client.Cancel(id)
+	}
+	state.mu.Unlock()
+	state.wg.Wait()
 }
 
 func normalizeOpenAIOAuthPlatform(platform string) string {

@@ -1,8 +1,11 @@
+import type { ScheduledTestPlan } from '@/types'
 import { apiClient } from '../client'
 import type { ModelBillingConfig } from '@/utils/modelBilling'
 import type { ExcelBPSDefaults } from '@/utils/excelBPSDefaults'
 import type { OAuthModelMappingRule } from '@/utils/oauthModelMappings'
+export type OAuthInitialQualityRule = Pick<ScheduledTestPlan, 'model_id' | 'cron_expression' | 'enabled' | 'max_results' | 'pelican_config'>
 export interface AutoConfig {
+ quality_rule?: OAuthInitialQualityRule | null
  model_billing?: ModelBillingConfig
  model_mappings?: OAuthModelMappingRule[] | null
  excel_bps?: ExcelBPSDefaults
@@ -18,6 +21,7 @@ export interface AutoConfig {
  upgrade_step: number
  max_concurrency: number
  cooldown_seconds: number
+ cost_multiplier?: number
  revision: string
  runtime_blocked?: boolean
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/siwc"
 	"github.com/Wei-Shaw/sub2api/internal/reauthruntime"
 	"log/slog"
 	"net/http"
@@ -52,6 +53,7 @@ const (
 	OpenAIOAuthReauthEngineLocal                  = "local_worker"
 	OpenAIOAuthReauthEngineSessionStudio          = "session_studio"
 	OpenAIOAuthReauthDefaultSessionStudioEndpoint = "https://session.ameng2027.xyz/api/v1/relogin"
+	openAIOAuthReauthRuntimeSettingsKey           = "account_token_guard_v2_runtime"
 )
 
 const (
@@ -95,6 +97,12 @@ type OpenAIOAuthReauthConfigInput struct {
 	ClearPassword  bool
 	ClearTOTP      bool
 	PreserveProxy  bool
+}
+
+type OpenAIOAuthReauthRuntimeSettings struct {
+	Engine                string `json:"engine"`
+	WorkerConcurrency     int    `json:"worker_concurrency"`
+	ConcurrencyConfigured bool   `json:"-"`
 }
 
 // OpenAIOAuthReauthTask is the safe task status exposed to administrators.
@@ -375,7 +383,8 @@ func (s *OpenAIOAuthReauthService) SaveCredentialConfig(ctx context.Context, acc
 	if err := s.ensureDurableEncryption(); err != nil {
 		return nil, err
 	}
-	if _, err := s.accountFor(ctx, accountID); err != nil {
+	account, err := s.accountFor(ctx, accountID)
+	if err != nil {
 		return nil, err
 	}
 	existing, err := s.repo.GetConfig(ctx, accountID)
@@ -391,6 +400,27 @@ func (s *OpenAIOAuthReauthService) SaveCredentialConfig(ctx context.Context, acc
 	}
 	if engine != OpenAIOAuthReauthEngineLocal && engine != OpenAIOAuthReauthEngineSessionStudio {
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_REAUTH_ENGINE_INVALID", "invalid OpenAI re-login engine")
+	}
+	mode := strings.TrimSpace(input.CredentialMode)
+	if mode == "" {
+		mode = OpenAIOAuthReauthModeEmailOTPURL
+	}
+	if mode != OpenAIOAuthReauthModeEmailOTPURL && mode != OpenAIOAuthReauthModePasswordTOTP {
+		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_REAUTH_MODE_INVALID", "invalid OpenAI re-login credential mode")
+	}
+	if mode == OpenAIOAuthReauthModeEmailOTPURL && input.Engine == "" {
+		engine = OpenAIOAuthReauthEngineLocal
+	}
+	runtimeSettings, err := s.GetRuntimeSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	engine = effectiveReauthEngine(mode, engine, runtimeSettings.Engine)
+	if account.IsOpenAISiwc() {
+		if mode != OpenAIOAuthReauthModePasswordTOTP || input.Engine == OpenAIOAuthReauthEngineSessionStudio || input.ProxySource == OpenAIOAuthReauthProxySourceMihomo {
+			return nil, infraerrors.BadRequest("SIWC_REAUTH_CONFIG_INVALID", "SIWC uses the built-in Go password/TOTP login and account or managed proxy")
+		}
+		engine = OpenAIOAuthReauthEngineLocal
 	}
 	proxySource := input.ProxySource
 	proxyID := input.ProxyID
@@ -413,13 +443,6 @@ func (s *OpenAIOAuthReauthService) SaveCredentialConfig(ctx context.Context, acc
 	email, err := normalizeReauthEmail(input.LoginEmail)
 	if err != nil {
 		return nil, err
-	}
-	mode := strings.TrimSpace(input.CredentialMode)
-	if mode == "" {
-		mode = OpenAIOAuthReauthModeEmailOTPURL
-	}
-	if mode != OpenAIOAuthReauthModeEmailOTPURL && mode != OpenAIOAuthReauthModePasswordTOTP {
-		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_REAUTH_MODE_INVALID", "invalid OpenAI re-login credential mode")
 	}
 	if engine == OpenAIOAuthReauthEngineSessionStudio && mode != OpenAIOAuthReauthModePasswordTOTP {
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_REAUTH_ENGINE_MODE_INVALID", "Session Studio requires password/TOTP mode")
@@ -483,7 +506,7 @@ func (s *OpenAIOAuthReauthService) SaveCredentialConfig(ctx context.Context, acc
 	return s.configView(ctx, stored)
 }
 
-func (s *OpenAIOAuthReauthService) configView(_ context.Context, stored *OpenAIOAuthReauthStoredConfig) (*OpenAIOAuthReauthConfig, error) {
+func (s *OpenAIOAuthReauthService) configView(ctx context.Context, stored *OpenAIOAuthReauthStoredConfig) (*OpenAIOAuthReauthConfig, error) {
 	if stored == nil {
 		return nil, nil
 	}
@@ -495,9 +518,16 @@ func (s *OpenAIOAuthReauthService) configView(_ context.Context, stored *OpenAIO
 	if err != nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "OPENAI_REAUTH_PROXY_SOURCE_INVALID", "saved re-login proxy source is invalid")
 	}
+	runtimeSettings, err := s.GetRuntimeSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
 	view := &OpenAIOAuthReauthConfig{
 		AccountID: stored.AccountID, LoginEmail: stored.LoginEmail, CredentialMode: mode,
-		Engine: normalizedReauthEngine(stored.Engine), ProxySource: proxySource, ProxyID: stored.ProxyID, UpdatedAt: stored.UpdatedAt,
+		Engine: effectiveReauthEngine(mode, stored.Engine, runtimeSettings.Engine), ProxySource: proxySource, ProxyID: stored.ProxyID, UpdatedAt: stored.UpdatedAt,
+	}
+	if account, err := s.accountFor(ctx, stored.AccountID); err == nil && account.IsOpenAISiwc() {
+		view.Engine = OpenAIOAuthReauthEngineLocal
 	}
 	switch mode {
 	case OpenAIOAuthReauthModeEmailOTPURL:
@@ -596,8 +626,10 @@ func (s *OpenAIOAuthReauthService) CreateTask(ctx context.Context, accountID int
 	if view == nil || !view.Configured {
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_REAUTH_CONFIG_REQUIRED", "save a complete re-login configuration first")
 	}
-	if err := s.checkWorkerMode(stored.CredentialMode); err != nil {
-		return nil, err
+	if !account.IsOpenAISiwc() {
+		if err := s.checkWorkerMode(stored.CredentialMode); err != nil {
+			return nil, err
+		}
 	}
 	expectedCredentialsHash, err := hashReauthCredentials(account.Credentials)
 	if err != nil {
@@ -653,10 +685,26 @@ func (s *OpenAIOAuthReauthService) ClaimTaskWithEngines(ctx context.Context, wor
 			return nil, infraerrors.BadRequest("OPENAI_REAUTH_ENGINE_INVALID", "invalid worker engines")
 		}
 	}
+	runtimeSettings, settingsErr := s.GetRuntimeSettings(ctx)
+	if settingsErr != nil {
+		return nil, settingsErr
+	}
 	s.workerLastSeen.Store(time.Now().UnixNano())
 	var record *OpenAIOAuthReauthTaskRecord
 	var err error
-	if claimer, ok := s.repo.(interface {
+	if runtimeSettings.Engine != "" {
+		claimer, ok := s.repo.(interface {
+			ClaimNextTaskForRuntime(context.Context, string, time.Duration, string, []string, string) (*OpenAIOAuthReauthTaskRecord, error)
+		})
+		if !ok {
+			return nil, infraerrors.ServiceUnavailable("OPENAI_REAUTH_RUNTIME_UNAVAILABLE", "Global re-login queue is unavailable")
+		}
+		mode := ""
+		if s.worker != nil {
+			mode = OpenAIOAuthReauthModePasswordTOTP
+		}
+		record, err = claimer.ClaimNextTaskForRuntime(ctx, workerID, openAIOAuthReauthStaleAfter, mode, engines, runtimeSettings.Engine)
+	} else if claimer, ok := s.repo.(interface {
 		ClaimNextTaskForEngines(context.Context, string, time.Duration, string, []string) (*OpenAIOAuthReauthTaskRecord, error)
 	}); ok {
 		mode := ""
@@ -689,6 +737,10 @@ func (s *OpenAIOAuthReauthService) ClaimTaskWithEngines(ctx context.Context, wor
 		_ = s.repo.MarkFailed(ctx, record.ID, workerID, "account is no longer eligible for OpenAI OAuth re-login")
 		return nil, nil
 	}
+	if account.IsOpenAISiwc() {
+		_ = s.repo.MarkFailed(ctx, record.ID, workerID, "SIWC tasks must be claimed by the built-in Go consumer")
+		return nil, nil
+	}
 	stored, err := s.repo.GetConfig(ctx, record.AccountID)
 	if err != nil || stored == nil {
 		_ = s.repo.MarkFailed(ctx, record.ID, workerID, "re-login configuration is missing")
@@ -698,7 +750,7 @@ func (s *OpenAIOAuthReauthService) ClaimTaskWithEngines(ctx context.Context, wor
 	if mode == "" {
 		mode = OpenAIOAuthReauthModeEmailOTPURL
 	}
-	engine := normalizedReauthEngine(stored.Engine)
+	engine := effectiveReauthEngine(mode, stored.Engine, runtimeSettings.Engine)
 	supported := false
 	for _, offered := range engines {
 		if offered == engine {
@@ -749,7 +801,7 @@ func (s *OpenAIOAuthReauthService) ClaimTaskWithEngines(ctx context.Context, wor
 	}
 	claim := &OpenAIOAuthReauthClaim{
 		TaskID: record.ID, AccountID: record.AccountID, LoginEmail: stored.LoginEmail,
-		CredentialMode: mode, Engine: normalizedReauthEngine(stored.Engine), ProxyURL: proxyURL,
+		CredentialMode: mode, Engine: engine, ProxyURL: proxyURL,
 	}
 	if claim.Engine == OpenAIOAuthReauthEngineSessionStudio {
 		claim.ReloginEndpoint, claim.ReloginHeaders, err = s.sessionStudioConfig(ctx)
@@ -863,6 +915,13 @@ func (s *OpenAIOAuthReauthService) SubmitCallback(ctx context.Context, taskID in
 	if err != nil || subtle.ConstantTimeCompare([]byte(currentCredentialsHash), []byte(record.ExpectedCredentialsHash)) != 1 {
 		return s.failCallback(ctx, taskID, "account credentials changed while re-login was running", errors.New("credential snapshot mismatch"))
 	}
+	if account.IsOpenAISiwc() {
+		cred, err := s.oauth.siwcState().client.Exchange(ctx, record.AuthSessionID, callback)
+		if err != nil {
+			return s.failCallback(ctx, taskID, "SIWC authorization exchange failed", err)
+		}
+		return s.applyReauthTokenInfo(ctx, record, account, siwcTokenInfo(cred), nil)
+	}
 	code, state, err := parseReauthCallback(callback)
 	if err != nil {
 		return s.failCallback(ctx, taskID, "invalid OAuth callback", err)
@@ -902,6 +961,9 @@ func (s *OpenAIOAuthReauthService) SubmitCredentials(ctx context.Context, taskID
 	currentCredentialsHash, err := hashReauthCredentials(account.Credentials)
 	if err != nil || subtle.ConstantTimeCompare([]byte(currentCredentialsHash), []byte(record.ExpectedCredentialsHash)) != 1 {
 		return s.failCallback(ctx, taskID, "account credentials changed while re-login was running", errors.New("credential snapshot mismatch"))
+	}
+	if account.IsOpenAISiwc() {
+		return s.failCallback(ctx, taskID, "SIWC requires a verified authorization callback", errors.New("SIWC direct token import is forbidden"))
 	}
 	tokenInfo, extra, err := directReauthTokenInfo(credentials, workerExtra)
 	if err != nil {
@@ -1079,6 +1141,12 @@ func (s *OpenAIOAuthReauthService) applyCredentials(ctx context.Context, taskID 
 func validateReauthToken(account *Account, tokenInfo *OpenAITokenInfo) error {
 	if account == nil || tokenInfo == nil {
 		return infraerrors.BadRequest("OPENAI_REAUTH_IDENTITY_MISMATCH", "OpenAI token identity is missing")
+	}
+	if account.IsOpenAISiwc() || tokenInfo.Siwc != nil {
+		if !account.IsOpenAISiwc() || tokenInfo.Siwc == nil || tokenInfo.Siwc.IdentityKey == "" || tokenInfo.Siwc.IdentityKey != account.GetCredential("siwc_identity") || tokenInfo.Siwc.AuthFlow != siwc.Sharing {
+			return infraerrors.Conflict("OPENAI_REAUTH_IDENTITY_MISMATCH", "SIWC identity or sharing grant changed")
+		}
+		return nil
 	}
 	hasStoredIdentity := false
 	oldAccountID := strings.TrimSpace(account.GetCredential("chatgpt_account_id"))

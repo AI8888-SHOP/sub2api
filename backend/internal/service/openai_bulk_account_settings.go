@@ -86,19 +86,12 @@ func normalizeBulkExcelBPSExtra(extra map[string]any) (bool, error) {
 			return true, err
 		}
 	}
-	for _, key := range []string{"openai_excel_bps", ExcelBPSIgnoreImagesKey, ExcelBPSIgnoreEncryptedContentKey, "openai_excel_bps_cache_creation_as_input", "openai_excel_bps_auto_disable_on_403", ExcelBPSAutoRecoverOn403Key, ExcelBPSAutoMoveOn403Key, "openai_excel_bps_mihomo"} {
+	for _, key := range []string{"openai_excel_bps", ExcelBPSIgnoreEncryptedContentKey, "openai_excel_bps_cache_creation_as_input", "openai_excel_bps_auto_disable_on_403", ExcelBPSAutoRecoverOn403Key, ExcelBPSAutoMoveOn403Key, "openai_excel_bps_mihomo"} {
 		if raw, exists := extra[key]; exists {
 			changed = true
 			if _, ok := raw.(bool); !ok {
 				return true, infraerrors.BadRequest("OPENAI_EXCEL_BPS_INVALID", key+" must be a boolean")
 			}
-		}
-	}
-	if raw, exists := extra[ExcelBPSProtocolKey]; exists {
-		changed = true
-		protocol, ok := raw.(string)
-		if !ok || (protocol != ExcelBPSProtocolExcel && protocol != ExcelBPSProtocolGoogleSheets) {
-			return true, infraerrors.BadRequest("OPENAI_EXCEL_BPS_INVALID", ExcelBPSProtocolKey+" must be excel or google_sheets")
 		}
 	}
 	if raw, exists := extra[ExcelBPS403TargetGroupIDKey]; exists {
@@ -138,7 +131,6 @@ func normalizeBulkExcelBPSExtra(extra map[string]any) (bool, error) {
 		}
 	}
 	if enabled, exists := extra["openai_excel_bps"].(bool); exists && !enabled {
-		delete(extra, ExcelBPSProtocolKey)
 		extra["openai_excel_bps_models"] = nil
 		if _, exists := extra["openai_excel_bps_mihomo"]; exists {
 			extra["openai_excel_bps_mihomo"] = false
@@ -146,9 +138,6 @@ func normalizeBulkExcelBPSExtra(extra map[string]any) (bool, error) {
 		extra["openai_excel_bps_cache_creation_as_input"] = false
 		if _, exists := extra[ExcelBPSAutoRecoverOn403Key]; exists {
 			extra[ExcelBPSAutoRecoverOn403Key] = false
-		}
-		if _, exists := extra[ExcelBPSIgnoreImagesKey]; exists {
-			extra[ExcelBPSIgnoreImagesKey] = false
 		}
 		if _, exists := extra[ExcelBPSIgnoreEncryptedContentKey]; exists {
 			extra[ExcelBPSIgnoreEncryptedContentKey] = false

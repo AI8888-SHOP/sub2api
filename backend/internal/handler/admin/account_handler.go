@@ -27,6 +27,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -2918,6 +2919,26 @@ func (h *AccountHandler) SetSchedulable(c *gin.Context) {
 	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
 }
 
+// GetModelReasoning returns account-specific reasoning choices for a test model.
+func (h *AccountHandler) GetModelReasoning(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	modelID := strings.TrimSpace(c.Query("model_id"))
+	if modelID == "" {
+		response.BadRequest(c, "Model ID is required")
+		return
+	}
+	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		response.NotFound(c, "Account not found")
+		return
+	}
+	response.Success(c, h.accountTestService.GetAccountTestReasoning(c.Request.Context(), account, modelID))
+}
+
 // GetAvailableModels handles getting available models for an account
 // GET /api/v1/admin/accounts/:id/models
 func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
@@ -3082,6 +3103,12 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 			})
 		}
 		response.Success(c, models)
+		return
+	}
+
+	// TypeSafe accounts serve only the native System One model.
+	if account.IsTypeSafe() {
+		response.Success(c, []claude.Model{{ID: typesafe.JevLatestModel, Type: "model", DisplayName: typesafe.JevLatestModel}})
 		return
 	}
 

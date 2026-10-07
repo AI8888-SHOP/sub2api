@@ -1,4 +1,12 @@
 export default {
+  quality: {
+  "title": "Initial quality operations rule",
+  "hint": "Copy an existing quality rule to new OAuth accounts on the selected platform. Leave empty to skip.",
+  "none": "Do not create a quality rule",
+  "saved": "Saved quality rule copy",
+  "loadFailed": "Could not load quality rules. The saved configuration is preserved.",
+  "copyHint": "Copies models, schedule, actions and enabled state. The saved copy is independent of its source. Existing accounts, reauthorization and manual edits are unaffected."
+},
   "title": "Auto Configuration",
   "description": "Manage BPS defaults, model pricing, new OAuth account initialization and concurrency upgrades.",
   "modelBilling": {
@@ -32,6 +40,7 @@ export default {
   "priority": "Priority",
   "load_factor": "Load factor",
   "concurrency": "Initial concurrency",
+  "cost_multiplier": "Cost multiplier",
   "groups": "Initial groups",
   "noGroups": "No active matching groups. Create one in group management first.",
   "loadHint": "Lower priority values run first. Load factor controls scheduling frequency independently of concurrency limits and billing multipliers.",
@@ -92,6 +101,8 @@ export default {
     "subtitle": "Models and options to fill when enabling BPS with defaults in an account.",
     "scopeHint": "This page only saves the template. Accounts offer default and initial activation modes. Creating, importing or syncing an account never enables BPS automatically.",
     "models": "Default models",
+    "ws_sse_accelerationHint": "Save the default checkbox state for HTTP streaming WS acceleration. Off by default.",
+    "auto_enable_on_degradationHint": "Save the default checkbox state for enabling BPS after degradation. Off by default.",
     "options": "Preselected options",
     "reset": "Restore recommended options",
     "advanced": "More options",
@@ -100,7 +111,6 @@ export default {
     "auto_disable_on_403Hint": "Disable BPS on a matching upstream 403. The account can still use its original Codex route.",
     "cache_creation_as_inputHint": "Bill cache creation tokens at the input rate without changing upstream caching.",
     "omit_unsupported_toolsHint": "Omit unsupported hosted tools. Live search and image generation will be unavailable.",
-    "ignore_imagesHint": "Replace images with a notice when system BPS image support is off, retaining the rest of the conversation.",
     "auto_recover_on_403Hint": "Requires automatic disabling on 403. Periodic text probes consume some quota and re-enable BPS on success.",
     "auto_move_on_403Hint": "Move to the selected group on a matching 403, or choose to leave all groups.",
     "session_proxyHint": "Requires a configured Mihomo or IP management pool. Unstable egress can affect requests.",

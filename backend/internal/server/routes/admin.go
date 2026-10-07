@@ -38,6 +38,10 @@ func RegisterAdminRoutes(
 	admin.Use(h.Admin.Account.AuthorizeObserver)
 	admin.Use(middleware.AdminComplianceGuard(settingService))
 	{
+		// Optional region-to-Pod routing, configured inside Gateway settings.
+		admin.GET("/serverless", h.Admin.Setting.GetServerless)
+		admin.PUT("/serverless", h.Admin.Setting.SaveServerless)
+		admin.POST("/serverless/pods/:id/probe", h.Admin.Setting.ProbeServerless)
 		// 部署与运营合规确认
 		registerAdminComplianceRoutes(admin, h)
 
@@ -141,6 +145,7 @@ func RegisterAdminRoutes(
 		// 渠道监控
 		registerChannelMonitorRoutes(admin, h, settingService)
 		registerChannelMonitorV2Routes(admin, h, settingService)
+		registerChannelMonitorV3Routes(admin, h, settingService)
 
 		// 风控中心
 		registerContentModerationRoutes(admin, h)
@@ -390,6 +395,9 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/upstream-billing-probe/batch", h.Admin.Account.ProbeUpstreamBillingBatch)
 		accounts.GET("/ollama-cloud-usage/settings", h.Admin.Account.GetOllamaCloudUsageSettings)
 		accounts.PUT("/ollama-cloud-usage/settings", h.Admin.Account.UpdateOllamaCloudUsageSettings)
+		accounts.GET("/astra-gateway/status", h.Admin.Account.AstraGatewayStatus)
+		accounts.GET("/astra-gateway/history", h.Admin.Account.AstraGatewayHistory)
+		accounts.POST("/astra-gateway/test", h.Admin.Account.AstraGatewayTest)
 		accounts.GET("/codex-harvest-flow", h.Admin.Account.GetCodexHarvestFlow)
 		accounts.GET("/codex-harvest-controls", h.Admin.Account.GetCodexHarvestControls)
 		accounts.PUT("/codex-harvest-controls", h.Admin.Account.UpdateCodexHarvestControls)
@@ -447,6 +455,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/:id/schedulable", h.Admin.Account.SetSchedulable)
 		accounts.POST("/models/sync-upstream-preview", h.Admin.Account.SyncUpstreamModelsPreview)
 		accounts.GET("/:id/models", h.Admin.Account.GetAvailableModels)
+		accounts.GET("/:id/models/reasoning", h.Admin.Account.GetModelReasoning)
 		accounts.POST("/:id/models/sync-upstream", h.Admin.Account.SyncUpstreamModels)
 		accounts.POST("/batch", h.Admin.Account.BatchCreate)
 		// 账号导出泄露上游凭证原文——要求 step-up 2FA
@@ -479,6 +488,7 @@ func registerOpenAIOAuthReauthWorkerRoutes(v1 *gin.RouterGroup, h *handler.Handl
 	worker := v1.Group("/internal/openai-reauth")
 	{
 		worker.POST("/claim", h.Admin.OpenAIOAuthReauth.Claim)
+		worker.POST("/runtime-settings", h.Admin.OpenAIOAuthReauth.RuntimeSettings)
 		worker.POST("/:task_id/progress", h.Admin.OpenAIOAuthReauth.Progress)
 		worker.POST("/:task_id/callback", h.Admin.OpenAIOAuthReauth.Callback)
 		worker.POST("/:task_id/credentials", h.Admin.OpenAIOAuthReauth.Credentials)
@@ -501,6 +511,10 @@ func registerAnnouncementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 func registerOpenAIOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	openai := admin.Group("/openai")
 	{
+		openai.POST("/siwc/sessions", h.Admin.OpenAIOAuth.StartSiwc)
+		openai.GET("/siwc/sessions/:session", h.Admin.OpenAIOAuth.SiwcStatus)
+		openai.DELETE("/siwc/sessions/:session", h.Admin.OpenAIOAuth.CancelSiwc)
+		openai.POST("/siwc/exchange", h.Admin.OpenAIOAuth.ExchangeSiwc)
 		openai.POST("/generate-auth-url", h.Admin.OpenAIOAuth.GenerateAuthURL)
 		openai.POST("/exchange-code", h.Admin.OpenAIOAuth.ExchangeCode)
 		openai.POST("/refresh-token", h.Admin.OpenAIOAuth.RefreshToken)
@@ -615,6 +629,8 @@ func registerPromoCodeRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	adminSettings := admin.Group("/settings")
 	{
+		adminSettings.GET("/astra-routing", h.Admin.Setting.GetAstraRouting)
+		adminSettings.PUT("/astra-routing", h.Admin.Setting.UpdateAstraRouting)
 		adminSettings.GET("", h.Admin.Setting.GetSettings)
 		adminSettings.PUT("", h.Admin.Setting.UpdateSettings)
 		adminSettings.POST("/test-smtp", h.Admin.Setting.TestSMTPConnection)
@@ -805,6 +821,8 @@ func registerScheduledTestRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	admin.POST("/account-ops/token-guard-v2/encryption/initialize", h.Admin.AccountTokenGuard.InitializeCredentialEncryption)
 	admin.GET("/account-ops/token-guard-v2/accounts", h.Admin.AccountTokenGuardV2.List)
 	admin.PUT("/account-ops/token-guard-v2/rules", h.Admin.AccountTokenGuardV2.SaveRules)
+	admin.PUT("/account-ops/token-guard-v2/runtime", h.Admin.AccountTokenGuardV2.SaveRuntime)
+	admin.PATCH("/account-ops/token-guard-v2/accounts/:id/switches", h.Admin.AccountTokenGuardV2.UpdateSwitches)
 	admin.POST("/account-ops/token-guard-v2/accounts", h.Admin.AccountTokenGuardV2.Create)
 	admin.PUT("/account-ops/token-guard-v2/accounts/:id", h.Admin.AccountTokenGuardV2.Update)
 	admin.DELETE("/account-ops/token-guard-v2/accounts/:id", h.Admin.AccountTokenGuardV2.Delete)
@@ -974,6 +992,29 @@ func registerChannelMonitorV2Routes(admin *gin.RouterGroup, h *handler.Handlers,
 	}
 }
 
+// registerChannelMonitorV3Routes keeps editing and previewing available in any
+// mode so a site can be prepared before switching. The preview has data
+// whenever the passive aggregation runs (v2 or v3).
+func registerChannelMonitorV3Routes(admin *gin.RouterGroup, h *handler.Handlers, settingService *service.SettingService) {
+	admin.PUT("/channel-monitor-mode", h.ChannelMonitorV3.SetMode)
+
+	monitor := admin.Group("/channel-monitor-v3")
+	monitor.Use(channelMonitorAdminFeatureGuard(settingService))
+	{
+		monitor.GET("/settings", h.ChannelMonitorV3.GetSettings)
+		monitor.PUT("/config", h.ChannelMonitorV3.UpdateConfig)
+		monitor.POST("/categories", h.ChannelMonitorV3.CreateCategory)
+		monitor.PUT("/categories/:id", h.ChannelMonitorV3.UpdateCategory)
+		monitor.DELETE("/categories/:id", h.ChannelMonitorV3.DeleteCategory)
+		monitor.POST("/components", h.ChannelMonitorV3.CreateComponent)
+		monitor.PUT("/components/:id", h.ChannelMonitorV3.UpdateComponent)
+		monitor.DELETE("/components/:id", h.ChannelMonitorV3.DeleteComponent)
+		monitor.POST("/reorder", h.ChannelMonitorV3.Reorder)
+		monitor.GET("/status", h.ChannelMonitorV3.Status)
+		monitor.GET("/incidents", h.ChannelMonitorV3.Incidents)
+	}
+}
+
 func channelMonitorAdminFeatureGuard(settingService *service.SettingService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if settingService != nil && settingService.GetChannelMonitorRuntime(c.Request.Context()).Enabled {
@@ -987,6 +1028,15 @@ func channelMonitorAdminFeatureGuard(settingService *service.SettingService) gin
 
 // channelMonitorModeV2Guard requires feature enabled and channel_monitor_mode=v2.
 func channelMonitorModeV2Guard(settingService *service.SettingService) gin.HandlerFunc {
+	return channelMonitorModeGuard(settingService, service.ChannelMonitorRuntime.V2Active)
+}
+
+// channelMonitorModeV3Guard requires feature enabled and channel_monitor_mode=v3.
+func channelMonitorModeV3Guard(settingService *service.SettingService) gin.HandlerFunc {
+	return channelMonitorModeGuard(settingService, service.ChannelMonitorRuntime.V3Active)
+}
+
+func channelMonitorModeGuard(settingService *service.SettingService, allowed func(service.ChannelMonitorRuntime) bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if settingService == nil {
 			response.ErrorFrom(c, service.ErrChannelMonitorDisabled)
@@ -999,7 +1049,7 @@ func channelMonitorModeV2Guard(settingService *service.SettingService) gin.Handl
 			c.Abort()
 			return
 		}
-		if !rt.PassiveAggregationAllowed() {
+		if !allowed(rt) {
 			response.ErrorFrom(c, service.ErrChannelMonitorModeMismatch)
 			c.Abort()
 			return

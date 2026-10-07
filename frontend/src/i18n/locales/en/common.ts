@@ -22,6 +22,13 @@ export default {
     confirm: 'Confirm',
     reset: 'Reset',
     search: 'Search',
+    featureSearch: {
+      title: 'Find a feature',
+      placeholder: 'Search features or keywords…',
+      resultCount: '{count} available features',
+      noResults: 'No matching features. Try another name or keyword.',
+      hint: '↑ ↓ Select · Enter Open · Esc Close'
+    },
     filter: 'Filter',
     export: 'Export',
     import: 'Import',
@@ -38,6 +45,9 @@ export default {
     all: 'All',
     none: 'None',
     selectAll: 'Select all',
+    sort: 'Sort',
+    sortAscending: 'Sort ascending',
+    sortDescending: 'Sort descending',
     noData: 'No data',
     expand: 'Expand',
     collapse: 'Collapse',

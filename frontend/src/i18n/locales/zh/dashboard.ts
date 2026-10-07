@@ -104,6 +104,24 @@ export default {
     apiKey: 'API 密钥',
     group: '分组',
     currentConcurrency: '当前并发',
+    concurrencyAndWaiting: '并发 / 等待',
+    concurrencyCount: '并发',
+    waitingCount: '等待',
+    queueFull: '已满',
+    queueOff: '全局排队已关闭',
+    queuePolicy: '统一排队设置：此密钥最多额外等待 {max} 个请求，每个请求最长等待 {seconds} 秒。由管理员统一配置。',
+    queuePolicyOff: '全局排队已关闭，达到此密钥的并发上限后直接拒绝新请求。',
+    queueNotApplicable: '此密钥未设置额外并发上限，不启用密钥级排队。',
+    queuePolicyLoading: '正在加载统一排队设置…',
+    queuePolicyUnavailable: '统一排队设置暂不可用。',
+    queueHint: '等待名额分别适用于每个密钥；名额已满时拒绝新请求，超时后结束等待。不保证按到达顺序处理。',
+    concurrencyLoading: '正在加载',
+    concurrencyUnavailable: '统计暂不可用',
+    concurrencyStale: '未更新',
+    concurrencyLimit: '并发上限',
+    concurrencyLimitHint: '此密钥可同时处理的最大请求数。0 表示无额外限制，用户和账号的并发限制仍然生效。',
+    concurrencyLimitInvalid: '并发上限必须为非负整数。',
+    noAdditionalConcurrencyLimit: '无额外限制',
     noGroup: '无分组',
     searchGroup: '搜索分组...',
     noGroupFound: '未找到匹配的分组',
@@ -183,7 +201,12 @@ export default {
         codexCli: 'Codex CLI',
         codexCliWs: 'Codex CLI (WebSocket)',
         grokCli: 'Grok CLI',
+        systemOne: 'System One',
         opencode: 'OpenCode'
+      },
+      typesafe: {
+        description: '通过 TypeSafe 原生 System One 端点调用 Jev。',
+        note: 'System One 不支持流式请求，也不兼容 Chat Completions、Responses、Claude Code 或 Codex 客户端。'
       },
       antigravity: {
         description: '为 Antigravity 分组配置 API 访问。请根据您使用的客户端选择对应的配置方式。',
@@ -223,29 +246,33 @@ export default {
       deepseek: {
         description: '通过当前 DeepSeek 分组配置 Claude Code、Codex 或 OpenCode。',
         codexDescription: '使用 API Key 配置 Codex，并通过当前 DeepSeek 分组发送请求。',
-        codexConfigTomlHint: '下载下方模型目录，将两个文件保存到 Codex 配置目录后重启 Codex。',
+        codexConfigTomlHint: '保存 config.toml 后重启 Codex，客户端会加载远程目录。使用本地文件模式时，还需下载目录并保存到配置中的路径。',
         codexNote: '启动 Codex 前先导出 SUB2API_API_KEY。下载的目录只包含模型元数据，不包含 API Key。'
       },
       minimax: {
         description: '通过当前 MiniMax 分组配置 Claude Code、Codex 或 OpenCode。',
         codexDescription: '使用 API Key 配置 Codex，并通过当前 MiniMax 分组发送请求。',
-        codexConfigTomlHint: '下载下方模型目录，将两个文件保存到 Codex 配置目录后重启 Codex。',
+        codexConfigTomlHint: '保存 config.toml 后重启 Codex，客户端会加载远程目录。使用本地文件模式时，还需下载目录并保存到配置中的路径。',
         codexNote: '启动 Codex 前先导出 SUB2API_API_KEY。下载的目录只包含模型元数据，不包含 API Key。'
       },
       composite: {
         description: '通过当前 Composite 路由分组配置受支持的客户端。',
         codexDescription: '使用 API Key 和当前 Composite 分组的完整模型目录配置 Codex。',
-        codexConfigTomlHint: '下载下方模型目录，将两个文件保存到 Codex 配置目录后重启 Codex。',
+        codexConfigTomlHint: '保存 config.toml 后重启 Codex，客户端会加载远程目录。使用本地文件模式时，还需下载目录并保存到配置中的路径。',
         codexNote: '启动 Codex 前先导出 SUB2API_API_KEY；分组会根据目录中选中的模型路由请求。'
       },
       routedCodex: {
         description: '使用当前路由分组的完整模型目录配置 Codex。',
-        configTomlHint: '下载下方模型目录，将两个文件保存到 Codex 配置目录后重启 Codex。',
+        configTomlHint: '保存 config.toml 后重启 Codex，客户端会加载远程目录。使用本地文件模式时，还需下载目录并保存到配置中的路径。',
         note: '启动 Codex 前先导出 SUB2API_API_KEY。下载的目录只包含模型元数据，不包含 API Key。'
       },
       codexModelCatalog: {
+        mode: '目录来源',
+        remote: '远程目录（Codex 0.156.0+）',
+        local: '本地文件（旧版客户端）',
+        oversized: '完整目录超过远程加载的 1 MiB 限制，已改为本地文件。请下载目录并保存到配置中的路径。',
         title: 'Codex 模型目录',
-        description: '使用当前 API Key 获取目录，并保存到 config.toml 引用的路径。',
+        description: 'Codex 会使用配置中的认证信息加载并刷新远程目录。使用本地文件模式时，请在下方获取目录并保存到配置中的路径。',
         fetch: '获取目录',
         retry: '重试',
         download: '下载目录',
@@ -636,6 +663,28 @@ export default {
     removeConfirm: '确定把这张作品从鹈鹕测智中移除吗？移除后所有用户都看不到它，此操作不能撤销。',
     removed: '已从展示中移除',
     removeFailed: '移除失败',
+    api: {
+      title: 'API 调用',
+      available: 'API 已开放',
+      unavailable: 'API 未开放',
+      unavailableHint: '管理员尚未开放 API Key 读取作品，当前无法调用。以下为开放后的调用方式。',
+      manageKeys: '管理 API Key',
+      readOnly: '免费只读接口，读取已发布的成功作品，不发起测试、不调用模型、不扣 API Key 余额。',
+      manifestEndpoint: '作品清单',
+      itemEndpoint: '作品正文',
+      copyUrl: '复制接口地址',
+      authentication: '使用本站有效 API Key，通过 Authorization: Bearer YOUR_API_KEY 鉴权。网页登录令牌不可用于此接口。',
+      examples: '调用示例',
+      manifestExample: '读取清单',
+      itemExample: '读取正文',
+      cacheExample: '条件请求',
+      copyExample: '复制调用示例',
+      manifestHint: 'data.groups 包含各分组的作品摘要。清单不含完整 HTML/SVG，按作品 content_url 获取正文。',
+      itemHint: '作品 ID 以清单为准；没有作品时请替换 RESULT_ID。data.response_text 是原始输出，可能含代码围栏。作品移除或过期后返回 404。',
+      cacheHint: '将 YOUR_ETAG 替换为上次响应 ETag 的完整原值，包括 W/ 和双引号。返回 304 时沿用本地清单；返回 200 时只下载尚未保存的作品。',
+      polling: '建议每 60 秒或更久轮询，使用 ETag 和 If-None-Match 检查变化。清单和正文均支持 GET/HEAD；遇到 429/503 请遵守 Retry-After。',
+      keySafety: '建议在调用端后端保存 API Key，避免放入公开前端。跨域浏览器请求应不携带 Cookie；显示作品时使用隔离 iframe。'
+    },
     disabled: {
       title: '鹈鹕测智暂未开放',
       description: '管理员开启后，这里会展示各分组定时生成的作品。'

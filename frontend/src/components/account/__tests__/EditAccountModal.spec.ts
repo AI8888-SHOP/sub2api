@@ -77,6 +77,7 @@ const BaseDialogStub = defineComponent({
 const ModelWhitelistSelectorStub = defineComponent({
   name: 'ModelWhitelistSelector',
   props: {
+    modelMappings: { type: Array, default: () => [] },
     modelValue: {
       type: Array,
       default: () => []
@@ -447,26 +448,8 @@ describe('EditAccountModal', () => {
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     await flushPromises()
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_excel_bps).toBe(true)
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_excel_bps_protocol).toBe('excel')
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_excel_bps_cache_creation_as_input).toBeUndefined()
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.unrelated).toBe('preserve')
-  })
-
-  it('saves and restores the Google Sheets BPS protocol selection', async () => {
-    const account = buildAccount()
-    account.type = 'oauth'
-    account.extra = { openai_excel_bps: true, openai_excel_bps_protocol: 'excel' }
-    updateAccountMock.mockReset().mockResolvedValue(account)
-    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
-    const wrapper = mountModal(account)
-    await wrapper.get('[data-testid="excel-bps-protocol-google_sheets"]').setValue(true)
-    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
-    await flushPromises()
-    const savedExtra = updateAccountMock.mock.calls[0]?.[1]?.extra
-    expect(savedExtra.openai_excel_bps_protocol).toBe('google_sheets')
-    await wrapper.setProps({ account: { ...account, extra: savedExtra } })
-    expect(wrapper.get<HTMLInputElement>('[data-testid="excel-bps-protocol-google_sheets"]').element.checked).toBe(true)
-    wrapper.unmount()
   })
 
   it('saves, restores and clears Excel BPS hosted tool omission', async () => {
@@ -672,7 +655,7 @@ describe('EditAccountModal', () => {
     const options = {
       openai_excel_bps_403_recovery_interval_minutes: 360,
       openai_excel_bps_models: ['gpt-6-astra'], openai_excel_bps_mihomo: true,
-      openai_excel_bps_proxy_source: 'ip_pool', openai_excel_bps_ignore_images: true,
+      openai_excel_bps_proxy_source: 'ip_pool',
       openai_excel_bps_ignore_encrypted_content: true, openai_excel_bps_cache_creation_as_input: true,
       openai_excel_bps_auto_move_on_403: true, openai_excel_bps_403_target_group_id: 0
     }
@@ -980,6 +963,24 @@ describe('EditAccountModal', () => {
     await flushPromises()
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_copilot_sdk).toBeUndefined()
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.unrelated_setting).toBe('keep')
+  })
+
+  it('passes existing non-identity mappings to the whitelist selector and preserves them on save', async () => {
+    const account = buildAccount()
+    account.credentials.model_mapping = { 'gpt-5.2': 'gpt-5.2', 'gpt-latest': 'deepseek-chat' }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    expect(wrapper.getComponent(ModelWhitelistSelectorStub).props('modelMappings')).toEqual([
+      { from: 'gpt-latest', to: 'deepseek-chat' }
+    ])
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual(account.credentials.model_mapping)
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true, account: { ...account } })
+    expect(wrapper.getComponent(ModelWhitelistSelectorStub).props('modelMappings')).toEqual([
+      { from: 'gpt-latest', to: 'deepseek-chat' }
+    ])
   })
 
   it('sets expiry presets from now instead of extending the saved expiry', async () => {

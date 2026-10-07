@@ -13,7 +13,7 @@ func SanitizeStoredCredentials(platform string, creds map[string]any) map[string
 	}
 	_ = platform
 	for _, key := range []string{
-		"password", "sso_token", "sso", "sso-rw", "clearTextPassword", "cookie",
+		"password", "totp_secret", "mfa_secret", "sso_token", "sso", "sso-rw", "clearTextPassword", "cookie",
 	} {
 		delete(creds, key)
 	}

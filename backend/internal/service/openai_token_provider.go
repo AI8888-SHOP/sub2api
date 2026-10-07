@@ -140,6 +140,9 @@ func (p *OpenAITokenProvider) GetAccessToken(ctx context.Context, account *Accou
 		return "", errors.New("not an openai oauth account")
 	}
 
+	if account.IsOpenAISiwc() && !account.HasSiwcSharing() {
+		return "", errors.New("SIWC sharing consent is required")
+	}
 	cacheKey := OpenAITokenCacheKey(account)
 
 	// 1) Try cache first.
@@ -227,6 +230,9 @@ func (p *OpenAITokenProvider) GetAccessToken(ctx context.Context, account *Accou
 		}
 	}
 
+	if account.IsOpenAISiwc() && !account.HasSiwcSharing() {
+		return "", errors.New("SIWC sharing consent is required")
+	}
 	accessToken := account.GetCredential("access_token")
 	if strings.TrimSpace(accessToken) == "" {
 		return "", errors.New("access_token not found in credentials")
@@ -236,6 +242,9 @@ func (p *OpenAITokenProvider) GetAccessToken(ctx context.Context, account *Accou
 	if p.tokenCache != nil {
 		latestAccount, isStale := CheckTokenVersion(ctx, account, p.accountRepo)
 		if isStale && latestAccount != nil {
+			if latestAccount.IsOpenAISiwc() && !latestAccount.HasSiwcSharing() {
+				return "", errors.New("SIWC sharing consent is required")
+			}
 			slog.Debug("openai_token_version_stale_use_latest", "account_id", account.ID)
 			accessToken = latestAccount.GetOpenAIAccessToken()
 			if strings.TrimSpace(accessToken) == "" {

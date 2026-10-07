@@ -1,4 +1,12 @@
 export default {
+  quality: {
+  "title": "首次加入质量运维",
+  "hint": "选择已有质量规则，为所选平台的新 OAuth 账号复制一份。留空则不自动创建。",
+  "none": "不自动加入质量运维",
+  "saved": "已保存的质量规则副本",
+  "loadFailed": "质量规则列表加载失败，已保存的配置仍会保留。",
+  "copyHint": "复制检测模型、计划、处置方式及启停状态。保存后与来源规则独立；已有账号、重新授权和手动编辑不受影响。"
+},
   "title": "自动配置",
   "description": "统一管理 BPS 默认配置、模型计价、新 OAuth 账号初始化和并发升级。",
   "modelBilling": {
@@ -32,6 +40,7 @@ export default {
   "priority": "优先级",
   "load_factor": "负载因子",
   "concurrency": "初始并发",
+  "cost_multiplier": "成本倍率",
   "groups": "首次加入分组",
   "noGroups": "暂无符合条件的启用分组，请先在分组管理中创建。",
   "loadHint": "优先级数值越小越优先；负载因子影响调度频率，与实际并发上限、计费倍率独立。",
@@ -92,6 +101,8 @@ export default {
     "subtitle": "在账号里选择“使用默认配置”开启 BPS 时，填入这里保存的模型和选项。",
     "scopeHint": "这里只保存默认模板。账号内提供“使用默认配置”和“使用初始配置”两种开启方式；新建、导入和同步账号不会自动开启 BPS。",
     "models": "默认使用的模型",
+    "ws_sse_accelerationHint": "保存 HTTP 流式 WS 加速的默认勾选状态，默认关闭。",
+    "auto_enable_on_degradationHint": "保存降智后自动开启 BPS 的默认勾选状态，默认关闭。",
     "options": "默认勾选的选项",
     "reset": "恢复推荐选项",
     "advanced": "更多选项",
@@ -100,7 +111,6 @@ export default {
     "auto_disable_on_403Hint": "收到符合条件的上游 403 时关闭 BPS，账号仍可使用原 Codex 通道。",
     "cache_creation_as_inputHint": "缓存创建 token 按普通输入单价计费，上游缓存行为不变。",
     "omit_unsupported_toolsHint": "省略 BPS 不支持的托管工具；实时搜索和图片生成将不可用。",
-    "ignore_imagesHint": "系统关闭 BPS 图片支持时，将图片替换为提示，保留其余对话。",
     "auto_recover_on_403Hint": "需要开启 403 自动关闭。按间隔发送文本探测，成功后重新开启 BPS，会消耗少量额度。",
     "auto_move_on_403Hint": "遇到符合条件的 403 时移入目标分组；可选择退出全部分组。",
     "session_proxyHint": "需要已配置可用的 Mihomo 或 IP 管理代理池；出口不稳定会影响请求。",

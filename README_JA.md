@@ -81,7 +81,7 @@ GitHub Releases からビルド済みバイナリをダウンロードするワ�
 #### インストール手順
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/AI8888-SHOP/sub2api/production/deploy/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/ranxi2001/sub2api/production/deploy/install.sh | sudo bash
 ```
 
 スクリプトは以下を実行します:
@@ -131,7 +131,7 @@ sudo journalctl -u sub2api -f
 sudo systemctl restart sub2api
 
 # アンインストール
-curl -sSL https://raw.githubusercontent.com/AI8888-SHOP/sub2api/production/deploy/install.sh | sudo bash -s -- uninstall -y
+curl -sSL https://raw.githubusercontent.com/ranxi2001/sub2api/production/deploy/install.sh | sudo bash -s -- uninstall -y
 ```
 
 ---
@@ -154,7 +154,7 @@ PostgreSQL と Redis のコンテナを含む Docker Compose でデプロイし�
 mkdir -p sub2api-deploy && cd sub2api-deploy
 
 # デプロイ準備スクリプトをダウンロードして実行
-curl -sSL https://raw.githubusercontent.com/AI8888-SHOP/sub2api/production/deploy/docker-deploy.sh | bash
+curl -sSL https://raw.githubusercontent.com/ranxi2001/sub2api/production/deploy/docker-deploy.sh | bash
 
 # サービスを起動
 docker compose up -d
@@ -176,7 +176,7 @@ docker compose logs -f sub2api
 
 ```bash
 # 1. リポジトリをクローン
-git clone --branch production https://github.com/AI8888-SHOP/sub2api.git
+git clone --branch production https://github.com/ranxi2001/sub2api.git
 cd sub2api/deploy
 
 # 2. 環境設定ファイルをコピー
@@ -200,8 +200,10 @@ JWT_SECRET=your_jwt_secret_here
 TOTP_ENCRYPTION_KEY=your_totp_key_here
 
 # オプション: 管理者アカウント
-ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=your_admin_password
+# 空欄の場合、初回起動時にランダムなメールアドレス（ログインユーザー名）とパスワードが自動生成され、ログに出力されます。
+# admin@example.com のような推測されやすい値は総当たり攻撃の標的になるため避けてください。
+ADMIN_EMAIL=
+ADMIN_PASSWORD=
 
 # オプション: カスタムポート
 SERVER_PORT=8080
@@ -250,9 +252,9 @@ docker compose -f docker-compose.local.yml logs -f sub2api
 
 ブラウザで `http://YOUR_SERVER_IP:8080` を開いてください。
 
-管理者パスワードが自動生成された場合は、ログで確認できます:
+管理者メールアドレス（ログインユーザー名）またはパスワードが自動生成された場合は、ログで確認できます:
 ```bash
-docker compose -f docker-compose.local.yml logs sub2api | grep "admin password"
+docker compose -f docker-compose.local.yml logs sub2api | grep "Generated admin"
 ```
 
 #### アップグレード
@@ -306,7 +308,7 @@ rm -rf data/ postgres_data/ redis_data/
 Apple シリコン搭載 Mac と macOS 26 では、Apple `container` 1.1.0 以降を使用して Sub2API、PostgreSQL、Redis の完全なスタックを実行できます:
 
 ```bash
-git clone --branch production https://github.com/AI8888-SHOP/sub2api.git
+git clone --branch production https://github.com/ranxi2001/sub2api.git
 cd sub2api/deploy
 ./apple-container.sh init
 ./apple-container.sh up
@@ -332,7 +334,7 @@ cd sub2api/deploy
 
 ```bash
 # 1. リポジトリをクローン
-git clone --branch production https://github.com/AI8888-SHOP/sub2api.git
+git clone --branch production https://github.com/ranxi2001/sub2api.git
 cd sub2api
 
 # 2. pnpm をインストール（未インストールの場合）

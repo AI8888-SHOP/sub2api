@@ -22,6 +22,13 @@ export default {
     confirm: '确认',
     reset: '重置',
     search: '搜索',
+    featureSearch: {
+      title: '功能搜索',
+      placeholder: '搜索功能名称或关键词…',
+      resultCount: '{count} 个可用功能',
+      noResults: '未找到匹配功能，请尝试其他名称或关键词',
+      hint: '↑ ↓ 选择 · Enter 打开 · Esc 关闭'
+    },
     filter: '筛选',
     export: '导出',
     import: '导入',
@@ -38,6 +45,9 @@ export default {
     all: '全部',
     none: '无',
     selectAll: '全选',
+    sort: '排序',
+    sortAscending: '切换为升序',
+    sortDescending: '切换为降序',
     noData: '暂无数据',
     expand: '展开',
     collapse: '收起',
