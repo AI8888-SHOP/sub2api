@@ -207,7 +207,11 @@ func (c *Client) Refresh(ctx context.Context, previous Credential, proxy string)
 	if err != nil {
 		return nil, err
 	}
-	out := *result.(*Credential)
+	credential, ok := result.(*Credential)
+	if !ok || credential == nil {
+		return nil, errors.New("invalid SIWC refresh result")
+	}
+	out := *credential
 	return &out, nil
 }
 func (c *Client) refresh(ctx context.Context, previous Credential, proxy, replayKey string) (*Credential, error) {
@@ -243,7 +247,11 @@ func (c *Client) refresh(ctx context.Context, previous Credential, proxy, replay
 	return result, nil
 }
 func doRequest(ctx context.Context, proxy string, req *http.Request) (*http.Response, error) {
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, errors.New("SIWC HTTP transport unavailable")
+	}
+	tr := base.Clone()
 	tr.Proxy = nil
 	if proxy != "" {
 		u, e := url.Parse(proxy)
@@ -262,7 +270,7 @@ func (c *Client) read(ctx context.Context, proxy string, req *http.Request, targ
 	if e != nil {
 		return errors.New("SIWC upstream connection failed")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var envelope struct {
 			Error json.RawMessage `json:"error"`

@@ -57,7 +57,11 @@ func Login(ctx context.Context, authURL, proxy string, input LoginInput) (string
 
 // Progress emits fixed, secret-free stage labels; no URLs, bodies or cookies.
 func LoginWithProgress(ctx context.Context, authURL, proxy string, input LoginInput, progress func(string)) (string, error) {
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return "", ErrManual
+	}
+	tr := base.Clone()
 	tr.Proxy = nil
 	if proxy != "" {
 		p, e := url.Parse(proxy)
@@ -278,7 +282,7 @@ func nodeText(n *html.Node) string {
 	}
 	var b strings.Builder
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		b.WriteString(nodeText(c))
+		_, _ = b.WriteString(nodeText(c))
 	}
 	return b.String()
 }

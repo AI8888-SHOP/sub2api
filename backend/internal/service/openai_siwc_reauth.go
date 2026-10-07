@@ -97,8 +97,6 @@ func (s *OpenAIOAuthReauthService) runSiwcReauth(ctx context.Context, record *Op
 		return
 	}
 	callback, err := siwc.Login(ctx, auth.AuthURL, proxyURL, siwc.LoginInput{Email: config.LoginEmail, Password: password, TOTPSecret: totp})
-	password = ""
-	totp = ""
 	if err != nil {
 		s.oauth.siwcState().client.Cancel(auth.SessionID)
 		fail("SIWC requires browser confirmation: edit this account and choose SIWC reauthorization")

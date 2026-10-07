@@ -39,7 +39,7 @@ func TestOpenAIOAuthReauthEngineLegacyClaimFiltersBeforeLocking(t *testing.T) {
 func TestSIWCNativeQueueClaimsOnlySIWCAccounts(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := NewOpenAIOAuthReauthRepository(db)
 	mock.ExpectQuery("(?s)WITH expired_callbacks.*callback_processing.*next_task.*JOIN accounts.*auth_mode.*siwc.*FOR UPDATE OF t SKIP LOCKED").WithArgs("siwc-go-test", int64(1800)).WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	task, err := repo.(*openAIOAuthReauthRepository).ClaimNextSiwcTask(context.Background(), "siwc-go-test", 30*time.Minute)
