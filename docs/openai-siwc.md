@@ -221,7 +221,7 @@ NODE_OPTIONS=--max-old-space-size=8192 corepack pnpm@9.15.9 exec vue-tsc -b
 NODE_OPTIONS=--max-old-space-size=8192 corepack pnpm@9.15.9 exec vite build
 cd ../backend
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags embed -trimpath \
-  -ldflags='-s -w -X main.Version=2.10.0-siwc -X main.BuildType=release' \
+  -ldflags='-s -w -X main.BuildType=release' \
   -o ../artifacts/sub2api-siwc-linux-amd64 ./cmd/server
 ```
 
